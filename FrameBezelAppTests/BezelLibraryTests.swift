@@ -47,7 +47,7 @@ struct BezelLibraryTests {
         let sb = try Sandbox(); defer { sb.cleanup() }
         let bezel = try sb.library.add(pngURL: try sb.png("iPhone 18 Pro - Black - Landscape.png"))
         #expect(bezel.model == "iPhone 18 Pro" && bezel.color == "Black" && bezel.orientation == .landscape)
-        #expect(bezel.name == "iPhone 18 Pro Black")
+        #expect(bezel.name == "iPhone 18 Pro") // 名前は機種の正式名称だけ（色は別項目）
     }
 
     @Test func addUsesGivenNameOverDerivedOne() throws {
@@ -225,6 +225,71 @@ struct BezelLibraryTests {
         _ = try sb.png("M - Black - Portrait.png", in: b)
         let r = sb.library.importFolder(b)
         #expect(r.added.isEmpty && r.skippedDuplicates == 1)
+    }
+
+    @Test func importsDmgStyleFolderWherePNGsSitDirectlyUnderPNG() throws {
+        // iPad / Mac の dmg: PNG/ の直下にファイルが並ぶ（機種フォルダが無い）
+        let sb = try Sandbox(); defer { sb.cleanup() }
+        let png = sb.source.appendingPathComponent("Bezel-iPad-(A16)/PNG")
+        for n in ["iPad (A16) - Blue - Portrait.png", "iPad (A16) - Blue - Landscape.png", "iPad (A16) - Pink - Portrait.png"] {
+            _ = try sb.png(n, in: png)
+        }
+        let r = sb.library.importFolder(sb.source)
+        #expect(r.added.count == 3 && r.failed.isEmpty)
+        let group = try #require(BezelCatalog.groups(try sb.library.list()).first)
+        #expect(group.model == "iPad (A16)")
+        #expect(group.colors(for: .portrait).sorted() == ["Blue", "Pink"])
+    }
+
+    @Test func importsMacFilesWithoutDashesAndInfersOrientation() throws {
+        let sb = try Sandbox(); defer { sb.cleanup() }
+        let png = sb.source.appendingPathComponent("Bezel-MacBook-Air-M5/PNG")
+        for n in ["MacBook Air M5 13-inch Midnight.png", "MacBook Air M5 13-inch Silver.png", "MacBook Air M5 15-inch Silver.png"] {
+            _ = try sb.png(n, in: png, width: 200, height: 100, screen: CGRect(x: 20, y: 20, width: 160, height: 60))
+        }
+        let r = sb.library.importFolder(sb.source)
+        #expect(r.added.count == 3)
+        let groups = BezelCatalog.groups(try sb.library.list())
+        #expect(Set(groups.map(\.model)) == ["MacBook Air M5 13-inch", "MacBook Air M5 15-inch"])
+        #expect(r.added.allSatisfy { $0.orientation == .landscape })
+    }
+
+    @Test func importsWatchFilesFromBandSubfoldersAsSizeSpecificModels() throws {
+        let sb = try Sandbox(); defer { sb.cleanup() }
+        let root = sb.source.appendingPathComponent("Bezel-Apple-Watch-Series-11-2025/PNG")
+        _ = try sb.png("Apple Watch S11 - 42mm - Aluminum Silver + Sport Band Black.png", in: root.appendingPathComponent("Sport Band"))
+        _ = try sb.png("Apple Watch S11 - 46mm - Aluminum Silver + Sport Band Black.png", in: root.appendingPathComponent("Sport Band"))
+        _ = try sb.png("Apple Watch S11 - 42mm - Titanium Gold + Milanese Loop.png", in: root.appendingPathComponent("Milanese Loop"))
+        let r = sb.library.importFolder(sb.source)
+        #expect(r.added.count == 3)
+        let groups = BezelCatalog.groups(try sb.library.list())
+        #expect(Set(groups.map(\.model)) == ["Apple Watch S11 42mm", "Apple Watch S11 46mm"])
+        #expect(groups.first { $0.model == "Apple Watch S11 42mm" }?.bezels.count == 2)
+    }
+
+    @Test func importsDuoFormsAsVariantsWithoutCollisions() throws {
+        let sb = try Sandbox(); defer { sb.cleanup() }
+        let png = sb.source.appendingPathComponent("iPhone Duo/PNG")
+        let names = ["iPhone Duo - Night Sky - Inner Open Portrait.png", "iPhone Duo - Night Sky - Inner Open Landscape.png",
+                     "iPhone Duo - Night Sky - Outer Closed Portrait.png", "iPhone Duo - Night Sky - Outer Closed Landscape.png",
+                     "iPhone Duo - Night Sky - Outer Open.png", "iPhone Duo - Star White - Outer Open.png"]
+        for n in names { _ = try sb.png(n, in: png) }
+        let r = sb.library.importFolder(sb.source)
+        #expect(r.added.count == 6 && r.skippedDuplicates == 0)
+        #expect(Set(r.added.compactMap(\.color)) == ["Night Sky", "Star White"]) // 形態は色に混ざらない
+        #expect(Set(r.added.compactMap(\.variant)) == ["Inner Open", "Outer Closed", "Outer Open"])
+        let g = try #require(BezelCatalog.groups(try sb.library.list()).first)
+        #expect(g.variants == ["Inner Open", "Outer Closed", "Outer Open"])
+        // 再取り込みは全て重複
+        #expect(sb.library.importFolder(sb.source).skippedDuplicates == 6)
+    }
+
+    @Test func importsIPhone11StyleFilesWithOnlyModelAndOrientation() throws {
+        let sb = try Sandbox(); defer { sb.cleanup() }
+        let png = sb.source.appendingPathComponent("Bezel-iPhone-11/PNG")
+        for n in ["iPhone 11 - Portrait.png", "iPhone 11 Pro - Portrait.png", "iPhone 11 Pro Max - Portrait.png"] { _ = try sb.png(n, in: png) }
+        let r = sb.library.importFolder(sb.source)
+        #expect(Set(r.added.compactMap(\.model)) == ["iPhone 11", "iPhone 11 Pro", "iPhone 11 Pro Max"])
     }
 
     // MARK: 同梱ベゼル

@@ -154,12 +154,12 @@ struct ContentView: View {
             let suggestion = model.suggestedBezels.first
             HStack(spacing: 10) {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                Text(String(format: "縦横比が合いません（スクショ %.2f / %@ %.2f）", ratio, bezel.name,
+                Text(String(format: "縦横比が合いません（スクショ %.2f / %@ %.2f）", ratio, bezel.modelName,
                             bezel.aperture.width / bezel.aperture.height))
                     .font(.callout)
                 Spacer(minLength: 8)
                 if let s = suggestion {
-                    Button(s.needsRotation ? "回転して \(s.bezel.name) に切り替え" : "\(s.bezel.name) に切り替え") {
+                    Button(s.needsRotation ? "回転して \(s.bezel.modelName) に切り替え" : "\(s.bezel.modelName) に切り替え") {
                         model.apply(s)
                     }
                 }
@@ -333,22 +333,23 @@ struct ContentView: View {
     private var bezelSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("機種")
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-                ForEach(model.modelGroups) { group in
-                    modelTile(group)
+            categoryPicker
+            VStack(spacing: 6) {
+                ForEach(model.visibleGroups) { group in
+                    modelRow(group)
                 }
                 Button { model.chooseBezelToAdd() } label: {
-                    VStack(spacing: 4) {
+                    HStack(spacing: 6) {
                         if model.isImporting {
                             ProgressView().controlSize(.small)
-                            Text("取り込み中…").font(.caption2)
+                            Text("取り込み中…").font(.caption)
                         } else {
-                            Image(systemName: "plus").font(.title3)
-                            Text("追加").font(.caption2)
+                            Image(systemName: "plus")
+                            Text("追加").font(.caption)
                         }
                     }
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 84)
+                    .frame(maxWidth: .infinity, minHeight: 36)
                     .overlay(RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         .foregroundStyle(.tertiary))
@@ -363,18 +364,43 @@ struct ContentView: View {
 
             variantOptions
 
-            Button("画面領域を編集…") { model.editingBezel = model.selectedBezel }
+            Button("画面領域を編集…") { model.editingBezel = model.selectedRegisteredBezel }
                 .controlSize(.small)
                 .disabled(model.selectedBezel == nil)
         }
     }
 
-    /// 選んだ機種の向き・フレーム色。選べるものが 2 つ以上あるときだけ出す。
+    /// 機種の種類（iPhone / iPad / Mac / Watch）。取り込んだ機種にある種類だけを、機種名から自動で分類して出す。
+    @ViewBuilder
+    private var categoryPicker: some View {
+        if model.categories.count > 1 {
+            Picker("種類", selection: Binding(get: { model.browsingCategory }, set: { model.showCategory($0) })) {
+                ForEach(model.categories) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+    }
+
+    /// 選んだ機種の画面の形態・向き・フレーム色。選べるものが 2 つ以上あるときだけ出す。
+    /// 向きと色は、選んでいる形態の中にあるものだけを出す（Duo の外側・開く、は縦だけ、など）。
     @ViewBuilder
     private var variantOptions: some View {
         if let group = model.selectedGroup, let current = model.selectedBezel {
-            let orientations = group.orientations
-            let colors = group.colors(for: current.effectiveOrientation)
+            let variants = group.variants
+            let colors = group.selectableColors(for: current.effectiveOrientation, variant: current.variant)
+            if variants.count > 1 {
+                VStack(alignment: .leading, spacing: 4) {
+                    sectionHeader("形態")
+                    Picker("形態", selection: Binding(get: { current.variant ?? variants[0] },
+                                                    set: { model.selectVariant($0) })) {
+                        ForEach(variants, id: \.self) { Text(BezelNaming.variantLabel($0)).tag($0) }
+                    }
+                    .labelsHidden()
+                }
+            }
+            // 向きが固定のデバイス（Mac・Watch など）は、選択肢が 1 つなので出さない
+            let orientations = group.selectableOrientations(variant: current.variant)
             if orientations.count > 1 {
                 VStack(alignment: .leading, spacing: 4) {
                     sectionHeader("向き")
@@ -384,6 +410,10 @@ struct ContentView: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
+                    if model.isBezelTurned {
+                        Text("この向きのベゼルは未登録のため、登録されているベゼルを回転して使っています")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
             }
             if colors.count > 1 {
@@ -399,10 +429,11 @@ struct ContentView: View {
         }
     }
 
-    private func modelTile(_ group: BezelModelGroup) -> some View {
+    /// 機種 1 件の行。名前は折り返して全文を出す。種類のタブの中では、先頭の種類名を省いた短い名前にする。
+    private func modelRow(_ group: BezelModelGroup) -> some View {
         let selected = group.model == model.selectedBezel?.modelName
         let rep = group.representative
-        return VStack(spacing: 4) {
+        return HStack(spacing: 10) {
             Group {
                 if let thumb = model.thumbnails[rep.bezelFile] {
                     Image(decorative: thumb, scale: 1).resizable().scaledToFit()
@@ -410,18 +441,25 @@ struct ContentView: View {
                     Color.clear
                 }
             }
-            .frame(height: 60)
-            Text(group.model).font(.caption2).lineLimit(1)
+            .frame(width: 34, height: 44)
+            Text(group.category.shortName(of: group.model))
+                .font(.callout)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(6)
-        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, minHeight: 56)
         .background(RoundedRectangle(cornerRadius: 8)
             .fill(selected ? Color.accentColor.opacity(0.15) : Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 8)
             .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.1), lineWidth: selected ? 2 : 1))
         .contentShape(Rectangle())
         .onTapGesture { model.selectModel(group) }
-        .help(group.model)
+        .help(group.model) // 省略していない正式名称
+        .accessibilityLabel(group.model)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
         .contextMenu {
             Button("この機種を削除…", role: .destructive) { modelToDelete = group }
         }
@@ -560,7 +598,7 @@ struct ContentView: View {
         HStack(spacing: 12) {
             if let bezel = model.selectedBezel {
                 let size = Composer.outputSize(bezel: bezel)
-                Text(bezel.name)
+                Text(bezel.modelName)
                 Text("\(bezel.effectiveOrientation.label)向き")
                 Text("\(size.width)×\(size.height)").monospacedDigit()
                 Text("背景: \(model.backgroundKind.rawValue)")

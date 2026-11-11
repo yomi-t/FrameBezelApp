@@ -36,11 +36,13 @@ nonisolated public struct Bezel: Codable, Equatable, Identifiable, Sendable {
     public var orientation: BezelOrientation?
     /// フレームの色。色違いが無い素材は nil。
     public var color: String?
+    /// 同じ機種・向き・色でも画面の形態が違うもの（Duo の `Inner Open` / `Outer Closed` / `Outer Open` など）。無ければ nil。
+    public var variant: String?
 
     public var id: String { bezelFile }
 
     public init(name: String, bezelFile: String, imageWidth: Int, imageHeight: Int, aperture: Aperture,
-                model: String? = nil, orientation: BezelOrientation? = nil, color: String? = nil) {
+                model: String? = nil, orientation: BezelOrientation? = nil, color: String? = nil, variant: String? = nil) {
         self.name = name
         self.bezelFile = bezelFile
         self.imageWidth = imageWidth
@@ -49,13 +51,43 @@ nonisolated public struct Bezel: Codable, Equatable, Identifiable, Sendable {
         self.model = model
         self.orientation = orientation
         self.color = color
+        self.variant = variant
     }
 
-    public var modelName: String { model ?? name }
+    /// 画面や書き出しファイル名に使う、機種の正式名称（`Bezel` の接頭辞や色は付けない）。
+    public var modelName: String { BezelNaming.officialName(model ?? name) }
 
     /// 向きが未設定の旧データは、画面領域の縦横から推定する。
     public var effectiveOrientation: BezelOrientation {
         orientation ?? (aperture.width > aperture.height ? .landscape : .portrait)
+    }
+
+    /// 登録されているベゼルを 90° 回した定義（画像サイズ・画面領域・向きを入れ替える。bezelFile など他の項目は同じ）。
+    /// 画像側は `ImageRotation` で同じ向きに回す（`Bezel.quarterTurns(for:)`）。
+    public func turned(to target: BezelOrientation) -> Bezel {
+        guard effectiveOrientation != target else { return self }
+        var b = self
+        let w = Double(imageWidth), h = Double(imageHeight)
+        let a = aperture
+        b.imageWidth = imageHeight
+        b.imageHeight = imageWidth
+        if Self.turnsClockwise(to: target) {
+            // 時計回り: 点 (x, y) → (H − y, x)
+            b.aperture = Aperture(x: h - (a.y + a.height), y: a.x, width: a.height, height: a.width, cornerRadius: a.cornerRadius)
+        } else {
+            // 反時計回り: 点 (x, y) → (y, W − x)
+            b.aperture = Aperture(x: a.y, y: w - (a.x + a.width), width: a.height, height: a.width, cornerRadius: a.cornerRadius)
+        }
+        b.orientation = target
+        return b
+    }
+
+    /// 縦 → 横は反時計回り（Apple の横向きベゼルはノッチが左側にある向き）、横 → 縦は時計回り。
+    static func turnsClockwise(to target: BezelOrientation) -> Bool { target == .portrait }
+
+    /// `turned(to:)` と同じ向きに画像を回すための、時計回りの 90° 単位の回転数。
+    public func quarterTurns(to target: BezelOrientation) -> Int {
+        effectiveOrientation == target ? 0 : (Self.turnsClockwise(to: target) ? 1 : 3)
     }
 
     public static func decode(from data: Data) throws -> Bezel {

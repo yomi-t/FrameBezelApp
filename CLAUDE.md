@@ -15,7 +15,9 @@
   - `BezelDetector.swift`：ベゼル PNG のアルファ走査で画面領域を自動検出（透明ピクセルの外接矩形＋角丸推定）
   - `Composer.swift`：合成の中核。入力（スクショ CGImage、ベゼル定義、背景設定）→ 出力 CGImage の独立関数として実装
   - `BezelLibrary.swift`：Application Support 内のベゼル管理（一覧、追加＝コピー＋検出＋JSON保存、フォルダ丸ごと取り込み、削除、初回起動時のバンドル同梱分のコピー）
-  - `BezelCatalog.swift`：Apple 配布ファイル名（`機種 - 色 - Portrait.png`）の解析と、機種ごとのグルーピング・向き/色の選択ロジック。`BezelLibrary.importFolder` がフォルダ丸ごと取り込む
+  - `BezelCatalog.swift`：Apple 配布ファイル名の解析と、機種ごとのグルーピング・向き/色の選択ロジック。`BezelLibrary.importFolder` がフォルダ丸ごと取り込む。機種名は**ファイル名を優先**して決め（`機種 - 色 - 向き`、`MacBook … 13-inch 色`、`Studio Display … On Dark Background`、Apple Watch の `42mm` に対応。Duo の `Night Sky - Inner Open Landscape` は、色 `Night Sky`・形態 `Inner Open`・向き `landscape` に分け、形態（`Bezel.variant`）は向き・色とは別の選択肢にする）、フォルダ名はファイル名に機種が無いときだけ使う。`PNG` / `Portrait` / `Bezel-…` のフォルダ名は機種名にしない。機種名・ベゼル名には配布物由来の `Bezel` 接頭辞を付けず、機種の名前だけにする（`BezelNaming.officialName`）
+  - 向きの扱い：回転するのは iPhone・iPad のみ（`DeviceCategory.rotates`。Mac・Watch など向きが固定のデバイスは、向きの選択肢を出さず回転もしない）。その向きのベゼルが登録されていなければ、逆向きの登録ベゼルを 90° 回して使う（`Bezel.turned(to:)` と `BezelModelGroup.selection` / `bestSelection`）。縦→横は反時計回り（Apple の横向きはノッチが左）、横→縦は時計回り。保存データは回さず、合成・書き出しには回した定義と回した画像を渡す。向きが登録されていれば回転しない
+  - `DeviceCategory.swift`：機種名から iPhone / iPad / Mac / Watch / その他 へ自動分類（保存データには持たない）。機種一覧の種類切り替えに使う
   - `HeadlessExport.swift`：コマンドライン書き出し（`--export` 等）。引数の解釈と実行は UI から分離。`FrameBezelApp.swift` の `Launcher` が起動引数を見て GUI / CLI を切り替える
   - その他：`Preset.swift`、`AspectMatcher.swift`、`ImageRotation.swift`、`ImageFile.swift`
 - `FrameBezelApp/`（リポジトリ直下、アプリターゲットのソース）
@@ -33,7 +35,7 @@
 ## 禁止事項
 - 外部送信・公開・課金に関わる実装
 - 資格情報の取得・埋め込み
-- このプロジェクトフォルダ外への書き込み
+- このプロジェクトフォルダ外への書き込み（唯一の例外：`/install` コマンドが `.claude/scripts/install.sh` 経由で `/Applications/FrameBezelApp.app` を置き換えること。それ以外の方法で /Applications に書き込まない）
 - 仕様にない判断が必要になったら、実装で決めずチケットの結果欄に「要確認」として残す
 
 ## 流儀

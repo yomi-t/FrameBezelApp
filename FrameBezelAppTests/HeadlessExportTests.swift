@@ -197,6 +197,7 @@ struct HeadlessRunTests {
     @Test func fillDiffersFromFitForMismatchedAspect() throws {
         let env = try Env(); defer { env.cleanup() }
         var r = ExportRequest(screenshot: try env.shot(120, 80)); r.model = "iPad Y"; r.output = env.out()
+        r.orientation = .portrait // 向きを省略すると、登録の無い横向きを回転して合わせる
         var warnings: [String] = []
         let fit = try run(env, r, warn: { warnings.append($0) })
         #expect(TestSupport.pixel(fit, 75, 30).r == 0 && TestSupport.pixel(fit, 75, 30).a == 255) // 上の黒帯
@@ -211,9 +212,9 @@ struct HeadlessRunTests {
         var r = ExportRequest(screenshot: try env.shot(60, 160, name: "My Shot.png")); r.model = "iPhone X"; r.color = "Black"
         let url = try HeadlessExport.run(r, library: env.library, currentDirectory: env.root)
         #expect(url.deletingLastPathComponent().path == env.root.path)
-        #expect(url.lastPathComponent == "My Shot_iPhone X Black.png")
+        #expect(url.lastPathComponent == "My Shot_iPhone X.png")
         r.canvas = .init(width: 1179, height: 2556)
-        #expect(try HeadlessExport.run(r, library: env.library, currentDirectory: env.root).lastPathComponent == "My Shot_iPhone X Black_1179x2556.png")
+        #expect(try HeadlessExport.run(r, library: env.library, currentDirectory: env.root).lastPathComponent == "My Shot_iPhone X_1179x2556.png")
     }
 
     @Test func relativeOutputResolvesAgainstCurrentDirectory() throws {
@@ -253,17 +254,38 @@ struct HeadlessRunTests {
         #expect(try run(env, r).width == 100)
     }
 
-    @Test func unavailableOrientationOrColorFails() throws {
+    @Test func unavailableColorFailsAndUnavailableOrientationIsRotated() throws {
         let env = try Env(); defer { env.cleanup() }
         var r = ExportRequest(screenshot: try env.shot(60, 160)); r.output = env.out(); r.model = "iPad Y"
+        // iPad Y は縦だけ登録。横を指定すると、縦のベゼルを回転して使う
         r.orientation = .landscape
-        #expect(throws: CommandLineError.self) { try run(env, r) }
+        let rotated = try run(env, r)
+        #expect(rotated.width == 200 && rotated.height == 150)
         r.orientation = nil; r.color = "Pink"
         do { _ = try run(env, r); Issue.record("should fail") } catch let e as CommandLineError {
             #expect(e.localizedDescription.contains("Gray"))
         }
-        r.model = "iPhone X"; r.color = "White"; r.orientation = .landscape // 横には White が無い
+        // 回転して使う向きでは、回転元の色を指定できる
+        r.color = "Gray"; r.orientation = .landscape
+        #expect(try run(env, r).width == 200)
+        // 横が登録されている iPhone X では、横にある色（Black）だけ。White は縦にしか無い
+        r.model = "iPhone X"; r.color = "White"; r.orientation = .landscape
         #expect(throws: CommandLineError.self) { try run(env, r) }
+        r.color = "White"; r.orientation = .portrait
+        #expect(try run(env, r).width == 100)
+    }
+
+    @Test func fixedOrientationDevicesRejectAnotherOrientationAndIgnorePortraitScreenshots() throws {
+        let env = try Env(bezels: [("MacBook Neo - Blush.png", 200, 120, CGRect(x: 20, y: 20, width: 160, height: 80))])
+        defer { env.cleanup() }
+        var r = ExportRequest(screenshot: try env.shot(80, 160)); r.output = env.out()
+        #expect(try run(env, r).width == 200) // 縦長のスクショでも Mac は回さない
+        r.orientation = .portrait
+        do { _ = try run(env, r); Issue.record("should fail") } catch let e as CommandLineError {
+            #expect(e.localizedDescription.contains("向きが固定"))
+        }
+        r.orientation = .landscape
+        #expect(try run(env, r).width == 200)
     }
 
     @Test func emptyLibraryAndMissingFilesFail() throws {
@@ -276,6 +298,40 @@ struct HeadlessRunTests {
         #expect(throws: CommandLineError.self) { try run(ok, missing) }
         var badDir = ExportRequest(screenshot: try ok.shot(60, 160), output: URL(fileURLWithPath: "/nonexistent-dir/x.png")); badDir.model = "iPad Y"
         #expect(throws: CommandLineError.self) { try run(ok, badDir) }
+    }
+
+    @Test func exportsDuoByVariantAndOrientation() throws {
+        let env = try Env(bezels: [
+            ("iPhone Duo - Night Sky - Inner Open Portrait.png", 100, 130, CGRect(x: 10, y: 10, width: 80, height: 110)),
+            ("iPhone Duo - Night Sky - Outer Closed Portrait.png", 80, 120, CGRect(x: 10, y: 10, width: 60, height: 100)),
+            ("iPhone Duo - Night Sky - Outer Open.png", 200, 120, CGRect(x: 110, y: 10, width: 80, height: 100)),
+        ])
+        defer { env.cleanup() }
+        var r = ExportRequest(screenshot: try env.shot(60, 100)); r.output = env.out()
+        #expect(try run(env, r).width == 100) // 既定は先頭の形態（Inner Open）
+        r.variant = "outer closed"             // 大文字小文字は区別しない
+        #expect(try run(env, r).width == 80)
+        r.variant = "Outer Open"
+        #expect(try run(env, r).width == 200)
+        r.variant = "Tent"
+        #expect(throws: CommandLineError.self) { try run(env, r) }
+        r.variant = "Outer Open"; r.orientation = .landscape // 開いた外側（画面は縦長）の横は未登録 → 回転して使う
+        let rotated = try run(env, r)
+        #expect(rotated.width == 120 && rotated.height == 200)
+    }
+
+    @Test func variantOptionIsParsedAndListed() throws {
+        guard case .export(let r) = try HeadlessExport.parse(arguments: ["app", "--export", "a.png", "--variant", "Inner Open"]) else {
+            Issue.record("export expected"); return
+        }
+        #expect(r.variant == "Inner Open")
+        let env = try Env(bezels: [("iPhone Duo - Night Sky - Inner Open Portrait.png", 100, 130, CGRect(x: 10, y: 10, width: 80, height: 110)),
+                                   ("iPhone Duo - Night Sky - Outer Open.png", 200, 120, CGRect(x: 110, y: 10, width: 80, height: 100))])
+        defer { env.cleanup() }
+        var out: [String] = []
+        _ = HeadlessExport.runCommandLine(arguments: ["app", "--list-models"], library: env.library, out: { out.append($0) }, err: { _ in })
+        #expect(out.first?.contains("形態: Inner Open, Outer Open") == true)
+        #expect(out.first?.contains("Night Sky") == true && out.first?.contains("Night Sky Inner") == false)
     }
 
     @Test func listModelsShowsOrientationsAndColors() throws {

@@ -292,6 +292,8 @@ struct AppModelCropTests {
         let m = env.makeModel()
         m.selectModel(m.modelGroups.first { $0.model == "iPad Y" }!)
         m.loadScreenshot(data: try env.pngData(TestSupport.solid(w, h)), name: "s")
+        // 横長のスクショには、登録の無い横向きを回転して自動で合わせるので、登録どおりの縦向きを選び直す
+        m.selectOrientation(.portrait)
         return m
     }
 
@@ -485,7 +487,8 @@ struct AppModelExportTests {
     @Test func suggestedFileNameWithoutSize() throws {
         let env = try ModelEnv(); defer { env.cleanup() }
         let m = try loaded(env)
-        #expect(m.suggestedFileName == "shot_\(m.selectedBezel!.name).png")
+        #expect(m.suggestedFileName == "shot_\(m.selectedBezel!.modelName).png")
+        #expect(!m.suggestedFileName.contains("Bezel"))
     }
 
     @Test func suggestedFileNameWithSizeAddsDimensions() throws {
@@ -696,5 +699,336 @@ struct AppModelLibraryAndPresetTests {
         let bezel = try #require(m.selectedBezel)
         let image = try #require(m.bezelImage(for: bezel))
         #expect(image.width > 0)
+    }
+}
+
+@MainActor
+struct AppModelCategoryTests {
+    private let mixed: [(String, Int, Int, CGRect)] = ModelEnv.standard + [
+        ("MacBook Neo - Blush.png", 200, 100, CGRect(x: 20, y: 20, width: 160, height: 60)),
+        ("Apple Watch Ultra 4 - Natural + Trail Loop Sand.png", 100, 120, CGRect(x: 20, y: 20, width: 60, height: 80)),
+    ]
+
+    @Test func categoriesListOnlyWhatIsImported() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        #expect(env.makeModel().categories == [.iPhone, .iPad])
+        let all = try ModelEnv(bezels: mixed); defer { all.cleanup() }
+        #expect(all.makeModel().categories == [.iPhone, .iPad, .mac, .watch])
+    }
+
+    @Test func listShowsOnlyModelsOfTheBrowsingCategory() throws {
+        let env = try ModelEnv(bezels: mixed); defer { env.cleanup() }
+        let m = env.makeModel()
+        m.showCategory(.iPad)
+        #expect(m.visibleGroups.map(\.model) == ["iPad Y"])
+        m.showCategory(.mac)
+        #expect(m.visibleGroups.map(\.model) == ["MacBook Neo"])
+        m.showCategory(.watch)
+        #expect(m.visibleGroups.map(\.model) == ["Apple Watch Ultra 4"])
+        m.showCategory(.iPhone)
+        #expect(m.visibleGroups.map(\.model) == ["iPhone X"])
+    }
+
+    @Test func selectingAModelSwitchesTheCategoryAutomatically() throws {
+        let env = try ModelEnv(bezels: mixed); defer { env.cleanup() }
+        let m = env.makeModel()
+        let neo = try #require(m.modelGroups.first { $0.model == "MacBook Neo" })
+        m.selectModel(neo)
+        #expect(m.browsingCategory == .mac)
+        let watch = try #require(m.modelGroups.first { $0.model == "Apple Watch Ultra 4" })
+        m.selectModel(watch)
+        #expect(m.browsingCategory == .watch)
+    }
+
+    @Test func initialCategoryFollowsTheSelectedBezel() throws {
+        let env = try ModelEnv(bezels: [mixed[3], mixed[4]]); defer { env.cleanup() } // iPad Y と MacBook Neo だけ
+        let m = env.makeModel()
+        #expect(m.browsingCategory == DeviceCategory.of(modelName: m.selectedBezel!.modelName))
+        #expect(m.visibleGroups.contains { $0.model == m.selectedBezel!.modelName })
+    }
+
+    @Test func browsingAnotherCategoryKeepsTheSelection() throws {
+        let env = try ModelEnv(bezels: mixed); defer { env.cleanup() }
+        let m = env.makeModel()
+        m.selectModel(try #require(m.modelGroups.first { $0.model == "iPhone X" }))
+        let selected = m.selectedBezelFile
+        m.showCategory(.mac)
+        #expect(m.selectedBezelFile == selected)
+    }
+
+    @Test func deletingTheLastModelOfACategoryMovesToAnExistingOne() throws {
+        let env = try ModelEnv(bezels: mixed); defer { env.cleanup() }
+        let m = env.makeModel()
+        m.showCategory(.watch)
+        m.deleteModel(try #require(m.modelGroups.first { $0.model == "Apple Watch Ultra 4" }))
+        #expect(!m.categories.contains(.watch))
+        #expect(m.categories.contains(m.browsingCategory))
+    }
+
+    @Test func importedFolderSwitchesToItsCategory() async throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = env.makeModel()
+        let folder = env.root.appendingPathComponent("Mac/MacBook Neo", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try TestSupport.writeBezelPNG(to: folder.appendingPathComponent("MacBook Neo - Blush.png"), width: 200, height: 100,
+                                      screen: CGRect(x: 20, y: 20, width: 160, height: 60))
+        m.addBezelOrFolder(urls: [folder])
+        for _ in 0..<500 where m.isImporting || m.importSummary == nil { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(m.categories.contains(.mac))
+        #expect(m.browsingCategory == .mac)
+        #expect(m.selectedBezel?.modelName == "MacBook Neo")
+    }
+}
+
+@MainActor
+struct AppModelVariantTests {
+    /// Duo 相当: 内側（縦・横）、外側・閉じる（縦・横）、外側・開く（1 種類）。色は Night Sky / Star White。
+    private func duoEnv() throws -> ModelEnv {
+        var list: [(String, Int, Int, CGRect)] = []
+        for color in ["Night Sky", "Star White"] {
+            list += [
+                ("iPhone Duo - \(color) - Inner Open Portrait.png", 100, 130, CGRect(x: 10, y: 10, width: 80, height: 110)),
+                ("iPhone Duo - \(color) - Inner Open Landscape.png", 130, 100, CGRect(x: 10, y: 10, width: 110, height: 80)),
+                ("iPhone Duo - \(color) - Outer Closed Portrait.png", 80, 120, CGRect(x: 10, y: 10, width: 60, height: 100)),
+                ("iPhone Duo - \(color) - Outer Closed Landscape.png", 120, 80, CGRect(x: 10, y: 10, width: 100, height: 60)),
+                ("iPhone Duo - \(color) - Outer Open.png", 200, 120, CGRect(x: 110, y: 10, width: 80, height: 100)),
+            ]
+        }
+        return try ModelEnv(bezels: list)
+    }
+
+    @Test func selectingAVariantKeepsOrientationAndColor() throws {
+        let env = try duoEnv(); defer { env.cleanup() }
+        let m = env.makeModel()
+        m.selectModel(m.modelGroups[0])
+        m.selectOrientation(.landscape); m.selectColor("Star White")
+        m.selectVariant("Outer Closed")
+        #expect(m.selectedBezel?.variant == "Outer Closed")
+        #expect(m.selectedBezel?.effectiveOrientation == .landscape && m.selectedBezel?.color == "Star White")
+    }
+
+    @Test func variantWithASingleOrientationFallsBackToIt() throws {
+        let env = try duoEnv(); defer { env.cleanup() }
+        let m = env.makeModel()
+        m.selectModel(m.modelGroups[0])
+        m.selectVariant("Outer Open")
+        #expect(m.selectedBezel?.variant == "Outer Open")
+        #expect(m.selectedGroup?.orientations(variant: "Outer Open").count == 1)
+    }
+
+    @Test func orientationAndColorChangesStayInTheCurrentVariant() throws {
+        let env = try duoEnv(); defer { env.cleanup() }
+        let m = env.makeModel()
+        m.selectModel(m.modelGroups[0])
+        m.selectVariant("Outer Closed")
+        m.selectOrientation(.landscape)
+        #expect(m.selectedBezel?.variant == "Outer Closed")
+        m.selectColor("Night Sky")
+        #expect(m.selectedBezel?.variant == "Outer Closed" && m.selectedBezel?.effectiveOrientation == .landscape)
+    }
+
+    @Test func screenshotAspectPicksOrientationWithinTheVariant() throws {
+        let env = try duoEnv(); defer { env.cleanup() }
+        let m = env.makeModel()
+        m.selectModel(m.modelGroups[0])
+        m.selectVariant("Outer Closed")
+        m.loadScreenshot(data: try env.pngData(TestSupport.solid(100, 60)), name: "wide")
+        #expect(m.selectedBezel?.variant == "Outer Closed" && m.selectedBezel?.effectiveOrientation == .landscape)
+    }
+
+    @Test func tileRepresentativeIsTheFirstVariantsPortrait() throws {
+        let env = try duoEnv(); defer { env.cleanup() }
+        let m = env.makeModel()
+        #expect(m.modelGroups.count == 1)
+        #expect(m.modelGroups[0].representative.variant == "Inner Open")
+    }
+
+    @Test func selectingAVariantWithoutSelectionDoesNothing() throws {
+        let env = try ModelEnv(bezels: []); defer { env.cleanup() }
+        let m = env.makeModel()
+        m.selectVariant("Inner Open")
+        #expect(m.selectedBezelFile == nil)
+    }
+}
+
+@MainActor
+struct AppModelInitialSelectionTests {
+    @Test func initialSelectionIsTheFirstModelsDefaultForm() throws {
+        // 同じ機種に複数の形態があっても、起動時の選択は並び順に左右されず、先頭の形態の縦向きになる
+        var list: [(String, Int, Int, CGRect)] = []
+        for (n, w, h, r) in [
+            ("iPhone Duo - Night Sky - Outer Open.png", 200, 120, CGRect(x: 110, y: 10, width: 80, height: 100)),
+            ("iPhone Duo - Night Sky - Outer Closed Portrait.png", 80, 120, CGRect(x: 10, y: 10, width: 60, height: 100)),
+            ("iPhone Duo - Night Sky - Inner Open Portrait.png", 100, 130, CGRect(x: 10, y: 10, width: 80, height: 110)),
+        ] { list.append((n, w, h, r)) }
+        let env = try ModelEnv(bezels: list); defer { env.cleanup() }
+        let m = env.makeModel()
+        #expect(m.selectedBezel?.variant == "Inner Open" && m.selectedBezel?.effectiveOrientation == .portrait)
+    }
+}
+
+@MainActor
+struct AppModelRotatedBezelTests {
+    /// 縦だけ登録の機種（iPad Y）と、縦横ともある機種（iPhone X）
+    private func model(_ env: ModelEnv, _ name: String) -> AppModel {
+        let m = env.makeModel()
+        m.selectModel(m.modelGroups.first { $0.model == name }!)
+        return m
+    }
+
+    @Test func choosingAMissingOrientationRotatesTheRegisteredBezel() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env, "iPad Y")
+        #expect(!m.isBezelTurned && m.selectedBezel?.imageWidth == 150)
+        m.selectOrientation(.landscape)
+        #expect(m.isBezelTurned)
+        #expect(m.selectedBezel?.effectiveOrientation == .landscape)
+        #expect(m.selectedBezel?.imageWidth == 200 && m.selectedBezel?.imageHeight == 150) // 回した寸法
+        #expect(m.selectedRegisteredBezel?.imageWidth == 150) // 保存データは回さない
+        #expect(m.selectedRegisteredBezel?.effectiveOrientation == .portrait)
+        m.selectOrientation(.portrait)
+        #expect(!m.isBezelTurned && m.selectedBezel == m.selectedRegisteredBezel)
+    }
+
+    @Test func registeredOrientationIsNeverRotated() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env, "iPhone X")
+        m.selectOrientation(.landscape)
+        #expect(!m.isBezelTurned && m.selectedBezel?.imageWidth == 200)
+    }
+
+    @Test func rotatedBezelProducesRotatedPreviewAndScreenArea() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env, "iPad Y")
+        m.loadScreenshot(data: try env.pngData(TestSupport.solid(160, 120)), name: "wide") // 4:3 の横長 → 回転が合う
+        #expect(m.isBezelTurned && m.aspectMatches == true)
+        let p = try #require(m.preview)
+        #expect(p.width == 200 && p.height == 150)
+        // 回した窓（x=20,y=15,160x120）の中央にスクショ、外側はベゼル（黒）
+        #expect(TestSupport.pixel(p, 100, 75) == .init(r: 255, g: 0, b: 0, a: 255))
+        #expect(TestSupport.pixel(p, 5, 75).r == 0 && TestSupport.pixel(p, 5, 75).a == 255)
+    }
+
+    @Test func landscapeScreenshotAutoRotatesAPortraitOnlyModel() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env, "iPad Y")
+        m.loadScreenshot(data: try env.pngData(TestSupport.solid(160, 120)), name: "w")
+        #expect(m.isBezelTurned && m.selectedBezel?.effectiveOrientation == .landscape)
+        m.loadScreenshot(data: try env.pngData(TestSupport.solid(120, 160)), name: "t")
+        #expect(!m.isBezelTurned && m.selectedBezel?.effectiveOrientation == .portrait)
+    }
+
+    @Test func changingColorKeepsTheRotation() throws {
+        let env = try ModelEnv(bezels: [ModelEnv.standard[3], ("iPad Y - Pink - Portrait.png", 150, 200, CGRect(x: 15, y: 20, width: 120, height: 160))])
+        defer { env.cleanup() }
+        let m = model(env, "iPad Y")
+        m.selectOrientation(.landscape)
+        m.selectColor("Pink")
+        #expect(m.isBezelTurned && m.selectedBezel?.color == "Pink" && m.selectedBezel?.effectiveOrientation == .landscape)
+    }
+
+    @Test func selectingAnotherBezelResetsTheRotation() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env, "iPad Y")
+        m.selectOrientation(.landscape)
+        #expect(m.isBezelTurned)
+        m.selectModel(m.modelGroups.first { $0.model == "iPhone X" }!)
+        #expect(!m.isBezelTurned)
+    }
+
+    @Test func exportUsesTheRotatedBezel() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env, "iPad Y")
+        m.selectOrientation(.landscape)
+        let c = try #require(m.exportCanvas)
+        #expect(c.width == 200 && c.height == 150) // 回した寸法がそのまま書き出しサイズになる
+        let phone = AppStoreSize.all.first { $0.family == .iPad && $0.width == 2064 }!
+        m.exportSizeID = phone.id
+        #expect(m.exportCanvas?.width == 2752 && m.exportCanvas?.height == 2064) // 回転した向きで横長のサイズ
+    }
+
+    @Test func editingAlwaysTargetsTheRegisteredBezel() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env, "iPad Y")
+        m.selectOrientation(.landscape)
+        var edited = try #require(m.selectedRegisteredBezel)
+        edited.aperture.x += 1
+        m.updateBezel(edited)
+        #expect(try env.library.list().first { $0.bezelFile == edited.bezelFile }?.imageWidth == 150) // 回した寸法が保存されない
+        #expect(m.isBezelTurned && m.selectedBezel?.effectiveOrientation == .landscape)
+    }
+
+    @Test func numericAndCropEditsWorkOnTheRotatedScreen() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env, "iPad Y")
+        m.loadScreenshot(data: try env.pngData(TestSupport.solid(160, 120)), name: "w")
+        #expect(m.isBezelTurned)
+        let f = try #require(m.imageFrame)
+        #expect(abs(f.width - 160) < 1e-6 && abs(f.height - 120) < 1e-6) // 回した窓にちょうど収まる
+        m.setImageWidth(80)
+        #expect(abs(try #require(m.imageFrame).width - 80) < 1e-6)
+    }
+
+    @Test func screenAreaSurvivesBezelColorSwapButResetsOnOrientationChange() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env, "iPad Y")
+        m.loadScreenshot(data: try env.pngData(TestSupport.solid(160, 120)), name: "w")
+        m.setImageWidth(80)
+        let small = m.imageFrame
+        m.selectOrientation(.portrait) // 窓の寸法が変わる → 収めるに戻る
+        #expect(m.imageFrame != small)
+    }
+}
+
+@MainActor
+struct AppModelFixedOrientationTests {
+    private let mac: (String, Int, Int, CGRect) = ("MacBook Neo - Blush.png", 200, 120, CGRect(x: 20, y: 20, width: 160, height: 80))
+
+    @Test func portraitScreenshotDoesNotRotateAMac() throws {
+        let env = try ModelEnv(bezels: [mac]); defer { env.cleanup() }
+        let m = env.makeModel()
+        m.loadScreenshot(data: try env.pngData(TestSupport.solid(80, 160)), name: "tall")
+        #expect(!m.isBezelTurned && m.selectedBezel?.effectiveOrientation == .landscape)
+        #expect(m.selectedBezel?.imageWidth == 200)
+    }
+
+    @Test func selectingAnOrientationOnAMacChangesNothing() throws {
+        let env = try ModelEnv(bezels: [mac]); defer { env.cleanup() }
+        let m = env.makeModel()
+        m.selectOrientation(.portrait)
+        #expect(!m.isBezelTurned && m.selectedBezel?.effectiveOrientation == .landscape)
+    }
+
+    @Test func orientationChoicesAreHiddenForMacAndWatchButNotForPhones() throws {
+        let watch: (String, Int, Int, CGRect) = ("Apple Watch Ultra 4 - Natural + Trail Loop Sand.png", 100, 120, CGRect(x: 20, y: 20, width: 60, height: 80))
+        let env = try ModelEnv(bezels: ModelEnv.standard + [mac, watch]); defer { env.cleanup() }
+        let m = env.makeModel()
+        func choices(_ name: String) -> Int { m.modelGroups.first { $0.model == name }!.selectableOrientations().count }
+        #expect(choices("MacBook Neo") == 1)
+        #expect(choices("Apple Watch Ultra 4") == 1)
+        #expect(choices("iPhone X") == 2 && choices("iPad Y") == 2)
+    }
+}
+
+@MainActor
+struct AppModelOrderTests {
+    @Test func categoryListShowsNewestFirst() throws {
+        let bezels: [(String, Int, Int, CGRect)] = [
+            ("iPhone 11 - Portrait.png", 100, 200, CGRect(x: 20, y: 20, width: 60, height: 160)),
+            ("iPhone 17 - Black - Portrait.png", 100, 200, CGRect(x: 20, y: 20, width: 60, height: 160)),
+            ("iPhone 13 - Midnight.png", 100, 200, CGRect(x: 20, y: 20, width: 60, height: 160)),
+            ("iPhone 17 Pro - Silver - Portrait.png", 100, 200, CGRect(x: 20, y: 20, width: 60, height: 160)),
+        ]
+        let env = try ModelEnv(bezels: bezels); defer { env.cleanup() }
+        let m = env.makeModel()
+        m.showCategory(.iPhone)
+        #expect(m.visibleGroups.map(\.model) == ["iPhone 17 Pro", "iPhone 17", "iPhone 13", "iPhone 11"])
+    }
+
+    @Test func otherCategoriesAreNotMixedIn() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = env.makeModel()
+        m.showCategory(.iPad)
+        #expect(m.visibleGroups.map(\.model) == ["iPad Y"])
     }
 }

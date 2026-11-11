@@ -9,6 +9,8 @@ nonisolated public struct ExportRequest: Equatable, Sendable {
     public var model: String?
     public var orientation: BezelOrientation?
     public var color: String?
+    /// 画面の形態（Duo の `Inner Open` など）。省略時は先頭の形態
+    public var variant: String?
     /// 書き出しサイズ（px）。nil はベゼル PNG の元サイズ
     public var canvas: Canvas?
     /// true なら「埋める」。既定は「収める」
@@ -45,10 +47,11 @@ nonisolated public enum HeadlessExport {
             FrameBezelApp --list-models | --list-sizes | --help
 
     --export <path>        スクショ（PNG / JPEG）を指定すると、画面を開かずに書き出して終了します
-    --output <path>        出力先の PNG（既に有れば上書き）。省略時はカレントフォルダに {元名}_{ベゼル名}[_WxH].png
+    --output <path>        出力先の PNG（既に有れば上書き）。省略時はカレントフォルダに {元名}_{機種名}[_WxH].png
     --model <name>         機種名（--list-models で確認）。登録が 1 機種だけなら省略可
-    --orientation <o>      portrait | landscape。省略時はスクショの縦横比に近い向き
+    --orientation <o>      portrait | landscape。省略時はスクショの縦横比に近い向き。その向きのベゼルが未登録なら、逆向きを回転して使います
     --color <name>         フレームの色。省略時は先頭の色
+    --variant <name>       画面の形態（iPhone Duo の "Inner Open" | "Outer Closed" | "Outer Open"）。省略時は先頭の形態
     --size <WxH>           書き出しサイズ（例: 1320x2868）。App Store の iPhone / iPad サイズは、ベゼルの向きに合わせて縦横が決まります。
                            省略時はベゼル PNG の元サイズ。指定すると不透明（アルファ無し）の PNG になります
     --fill                 スクショを画面領域いっぱいに埋める（省略時は全体が収まる大きさ）
@@ -69,7 +72,7 @@ nonisolated public enum HeadlessExport {
         var values: [String: String] = [:]
         var flags: Set<String> = []
         var args = Array(arguments.dropFirst())
-        let valueOptions: Set<String> = ["--export", "--output", "--model", "--orientation", "--color", "--size", "--background"]
+        let valueOptions: Set<String> = ["--export", "--output", "--model", "--orientation", "--color", "--variant", "--size", "--background"]
         let flagOptions: Set<String> = ["--fill", "--list-models", "--list-sizes", "--help", "-h"]
 
         while !args.isEmpty {
@@ -100,6 +103,7 @@ nonisolated public enum HeadlessExport {
         request.output = values["--output"].map { URL(fileURLWithPath: $0) }
         request.model = values["--model"]
         request.color = values["--color"]
+        request.variant = values["--variant"]
         request.fill = flags.contains("--fill")
         if let o = values["--orientation"] {
             guard let parsed = BezelOrientation(rawValue: o.lowercased()) else {
@@ -169,13 +173,15 @@ nonisolated public enum HeadlessExport {
         let groups = BezelCatalog.groups(try library.list())
         guard !groups.isEmpty else { throw CommandLineError.failure("ベゼルが登録されていません。アプリでベゼルを取り込んでください") }
         let group = try selectGroup(request.model, from: groups)
-        let bezel = try selectBezel(in: group, request: request, screenshot: screenshot)
+        let selection = try selectBezel(in: group, request: request, screenshot: screenshot)
+        let bezel = selection.resolved // その向きが未登録なら、登録されている逆向きを回した定義
 
         if AspectMatcher.matches(screenshotWidth: screenshot.width, screenshotHeight: screenshot.height, aperture: bezel.aperture) == false {
-            warn("スクショの縦横比がベゼルの画面領域と合いません。余白が黒になります（\(bezel.name)）")
+            warn("スクショの縦横比がベゼルの画面領域と合いません。余白が黒になります（\(bezel.modelName)）")
         }
 
-        let bezelImage = try library.loadImage(for: bezel)
+        var bezelImage = try library.loadImage(for: selection.registered)
+        if selection.isRotated { bezelImage = ImageRotation.rotate(bezelImage, selection.rotation) ?? bezelImage }
         let settings = ComposeSettings(background: request.background)
         let crop: ScreenCrop = request.fill ? .fill : .fit
         let canvas = request.canvas.map { resolvedCanvas($0, for: bezel) }
@@ -209,7 +215,7 @@ nonisolated public enum HeadlessExport {
 
     static func defaultFileName(screenshot: URL, bezel: Bezel, canvas: ExportRequest.Canvas?) -> String {
         let suffix = canvas.map { "_\($0.width)x\($0.height)" } ?? ""
-        let raw = "\(screenshot.deletingPathExtension().lastPathComponent)_\(bezel.name)\(suffix).png"
+        let raw = "\(screenshot.deletingPathExtension().lastPathComponent)_\(bezel.modelName)\(suffix).png"
         return raw.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
     }
 
@@ -226,23 +232,33 @@ nonisolated public enum HeadlessExport {
         throw CommandLineError.failure("機種「\(name)」に複数が該当します: \(partial.map(\.model).joined(separator: "、"))")
     }
 
-    private static func selectBezel(in group: BezelModelGroup, request: ExportRequest, screenshot: CGImage) throws -> Bezel {
-        if let o = request.orientation, !group.orientations.contains(o) {
-            let have = group.orientations.map(\.rawValue).joined(separator: "、")
-            throw CommandLineError.failure("\(group.model) に \(o.rawValue) のベゼルがありません（あるのは \(have)）")
-        }
-        if let color = request.color {
-            let orientations = request.orientation.map { [$0] } ?? group.orientations
-            let available = orientations.flatMap { group.colors(for: $0) }
-            guard let match = available.first(where: { $0.caseInsensitiveCompare(color) == .orderedSame }) else {
-                let have = uniqued(available).joined(separator: "、")
-                throw CommandLineError.failure("色「\(color)」がありません（\(have.isEmpty ? "色の区別なし" : have)）")
+    private static func selectBezel(in group: BezelModelGroup, request: ExportRequest, screenshot: CGImage) throws -> BezelSelection {
+        var variant: String?
+        if let v = request.variant {
+            guard let match = group.variants.first(where: { $0.caseInsensitiveCompare(v) == .orderedSame }) else {
+                let have = group.variants.isEmpty ? "形態の区別なし" : group.variants.joined(separator: "、")
+                throw CommandLineError.failure("形態「\(v)」がありません（\(have)）")
             }
-            return request.orientation.map { group.pick(orientation: $0, color: match) }
-                ?? group.bestMatch(screenshotWidth: screenshot.width, screenshotHeight: screenshot.height, color: match)
+            variant = match
         }
-        return request.orientation.map { group.pick(orientation: $0, color: nil) }
-            ?? group.bestMatch(screenshotWidth: screenshot.width, screenshotHeight: screenshot.height, color: nil)
+        var color: String?
+        if let wanted = request.color {
+            let available = request.orientation.map { group.selectableColors(for: $0, variant: variant) }
+                ?? uniqued(BezelOrientation.allCases.flatMap { group.selectableColors(for: $0, variant: variant) })
+            guard let match = available.first(where: { $0.caseInsensitiveCompare(wanted) == .orderedSame }) else {
+                throw CommandLineError.failure("色「\(wanted)」がありません（\(available.isEmpty ? "色の区別なし" : available.joined(separator: "、"))）")
+            }
+            color = match
+        }
+        // 向きの指定がその機種に登録されていなければ、逆向きのベゼルを回して使う。向きが固定のデバイス（Mac など）は回せない
+        if let o = request.orientation {
+            if !group.allowsRotation, !group.orientations(variant: variant).contains(o) {
+                let have = group.orientations(variant: variant).map(\.rawValue).joined(separator: "、")
+                throw CommandLineError.failure("\(group.model) は向きが固定です（\(have)）")
+            }
+            return group.selection(orientation: o, color: color, variant: variant)
+        }
+        return group.bestSelection(screenshotWidth: screenshot.width, screenshotHeight: screenshot.height, color: color, variant: variant)
     }
 
     private static func uniqued(_ items: [String]) -> [String] {
@@ -265,7 +281,8 @@ nonisolated public enum HeadlessExport {
                 for g in groups {
                     let o = g.orientations.map(\.rawValue).joined(separator: "/")
                     let colors = uniqued(g.orientations.flatMap { g.colors(for: $0) })
-                    out("\(g.model)\t向き: \(o)\t色: \(colors.isEmpty ? "-" : colors.joined(separator: ", "))")
+                    let variants = g.variants.isEmpty ? "" : "\t形態: " + g.variants.joined(separator: ", ")
+                    out("\(g.model)\t向き: \(o)\t色: \(colors.isEmpty ? "-" : colors.joined(separator: ", "))\(variants)")
                 }
             case .listSizes:
                 for s in AppStoreSize.all {

@@ -113,10 +113,10 @@ enum TestSupport {
     static func bezel(
         name: String = "T", file: String = "t.png", width: Int = 100, height: Int = 200,
         aperture: Aperture = Aperture(x: 10, y: 10, width: 80, height: 180, cornerRadius: 0),
-        model: String? = nil, orientation: BezelOrientation? = nil, color: String? = nil
+        model: String? = nil, orientation: BezelOrientation? = nil, color: String? = nil, variant: String? = nil
     ) -> Bezel {
         Bezel(name: name, bezelFile: file, imageWidth: width, imageHeight: height, aperture: aperture,
-              model: model, orientation: orientation, color: color)
+              model: model, orientation: orientation, color: color, variant: variant)
     }
 
     static func aperture(_ w: Double, _ h: Double) -> Aperture {

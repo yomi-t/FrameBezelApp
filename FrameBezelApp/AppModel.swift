@@ -68,11 +68,14 @@ final class AppModel {
 
     var selectedBezelFile: String? {
         didSet {
-            bezelImage = selectedBezel.flatMap { try? library.loadImage(for: $0) }
+            turnedTo = nextTurn
+            nextTurn = nil
+            bezelImage = loadSelectedBezelImage()
+            syncCategory()
             // 色違いなど画面領域が同じなら調整を引き継ぎ、違うなら「収める」に戻す（refreshPreview も内部で呼ばれる）
-            let old = bezels.first { $0.bezelFile == oldValue }?.aperture
             let new = selectedBezel?.aperture
-            let sameScreen = old != nil && new != nil && old?.width == new?.width && old?.height == new?.height
+            let sameScreen = lastAperture != nil && new != nil && lastAperture?.width == new?.width && lastAperture?.height == new?.height
+            lastAperture = new
             setCrop(sameScreen ? crop : .fit)
         }
     }
@@ -110,12 +113,40 @@ final class AppModel {
         }
         reloadBezels()
         presets = presetStore.load()
-        selectedBezelFile = bezels.first?.bezelFile
+        selectedBezelFile = modelGroups.first?.representative.bezelFile
         // init 中は didSet が走らないため、選択中ベゼルの画像はここで読み込む
-        bezelImage = selectedBezel.flatMap { try? library.loadImage(for: $0) }
+        bezelImage = loadSelectedBezelImage()
+        lastAperture = selectedBezel?.aperture
+        syncCategory()
     }
 
-    var selectedBezel: Bezel? { bezels.first { $0.bezelFile == selectedBezelFile } }
+    /// 保存されているままの、選択中のベゼル（画面領域の編集などはこちらを対象にする）
+    var selectedRegisteredBezel: Bezel? { bezels.first { $0.bezelFile == selectedBezelFile } }
+
+    /// 登録されていない向きを使うとき、登録ベゼルを回して対応する。回した先の向き（登録どおりなら nil）
+    private(set) var turnedTo: BezelOrientation?
+    var isBezelTurned: Bool { selectedRegisteredBezel.map { turnedTo != nil && $0.effectiveOrientation != turnedTo } ?? false }
+    @ObservationIgnored private var nextTurn: BezelOrientation?
+    @ObservationIgnored private var lastAperture: Aperture?
+
+    /// 合成・表示に使うベゼル。回して使っているときは、画像サイズ・画面領域・向きを回した定義になる。
+    var selectedBezel: Bezel? {
+        guard let base = selectedRegisteredBezel else { return nil }
+        return turnedTo.map { base.turned(to: $0) } ?? base
+    }
+
+    /// 選択中の登録ベゼルの画像（回して使うときは回した画像）
+    private func loadSelectedBezelImage() -> CGImage? {
+        guard let base = selectedRegisteredBezel, let image = try? library.loadImage(for: base) else { return nil }
+        guard let target = turnedTo, base.effectiveOrientation != target else { return image }
+        return ImageRotation.rotate(image, Rotation(quarterTurns: base.quarterTurns(to: target))) ?? image
+    }
+
+    /// 向きを指定した選択を反映する。登録が無い向きなら、逆向きのベゼルを回して使う。
+    private func select(_ selection: BezelSelection) {
+        nextTurn = selection.isRotated ? selection.orientation : nil
+        selectedBezelFile = selection.registered.bezelFile // 同じファイルでも didSet が走り、回転の状態が反映される
+    }
 
     var settings: ComposeSettings {
         let background: BackgroundStyle
@@ -159,6 +190,24 @@ final class AppModel {
     // MARK: 機種 → 向き・色
 
     var modelGroups: [BezelModelGroup] { BezelCatalog.groups(bezels) }
+    /// 取り込み済みの機種にある種類（iPhone / iPad / Mac / Watch / その他）。機種名から自動で分類する
+    var categories: [DeviceCategory] { BezelCatalog.categories(modelGroups) }
+    /// 機種一覧に表示している種類。選択中の機種が変わると、その種類に自動で切り替わる
+    var browsingCategory: DeviceCategory = .iPhone
+    /// 表示中の種類に属する機種。    /// 新しい機種が上（`ModelOrder`）。
+    var visibleGroups: [BezelModelGroup] { ModelOrder.sortedNewestFirst(modelGroups.filter { $0.category == browsingCategory }) }
+
+    /// 一覧の種類を切り替える。選択中の機種はそのまま（別の種類の機種は選ばれたまま残る）。
+    func showCategory(_ category: DeviceCategory) { browsingCategory = category }
+
+    /// 選択中の機種の種類へ一覧を合わせる。無ければ、いま在る先頭の種類にする。
+    private func syncCategory() {
+        if let bezel = selectedBezel {
+            browsingCategory = DeviceCategory.of(modelName: bezel.modelName)
+        } else if !categories.contains(browsingCategory), let first = categories.first {
+            browsingCategory = first
+        }
+    }
     var selectedGroup: BezelModelGroup? {
         guard let name = selectedBezel?.modelName else { return nil }
         return modelGroups.first { $0.model == name }
@@ -168,22 +217,31 @@ final class AppModel {
     func selectModel(_ group: BezelModelGroup) {
         let current = selectedBezel
         if let screenshot {
-            // スクショがあるときは、縦横比がよく合う向きを既定にする
-            selectedBezelFile = group.bestMatch(screenshotWidth: screenshot.width, screenshotHeight: screenshot.height,
-                                                color: current?.color).bezelFile
+            // スクショがあるときは、縦横比がよく合う向きを既定にする（登録が無い向きは回転して比べる）
+            select(group.bestSelection(screenshotWidth: screenshot.width, screenshotHeight: screenshot.height,
+                                       color: current?.color, variant: current?.variant))
         } else {
-            selectedBezelFile = group.pick(orientation: current?.effectiveOrientation, color: current?.color).bezelFile
+            // 登録されている向きの中から、今の向きに近いものを選ぶ（画面だけ切り替えるときは回転しない）
+            let bezel = group.pick(orientation: current?.effectiveOrientation, color: current?.color, variant: current?.variant)
+            select(BezelSelection(registered: bezel, orientation: bezel.effectiveOrientation))
         }
     }
 
+    /// 向きを選ぶ。その向きが登録されていなければ、逆向きのベゼルを回して使う。
     func selectOrientation(_ orientation: BezelOrientation) {
-        guard let group = selectedGroup else { return }
-        selectedBezelFile = group.pick(orientation: orientation, color: selectedBezel?.color).bezelFile
+        guard let group = selectedGroup, let current = selectedBezel else { return }
+        select(group.selection(orientation: orientation, color: current.color, variant: current.variant))
     }
 
     func selectColor(_ color: String) {
         guard let group = selectedGroup, let current = selectedBezel else { return }
-        selectedBezelFile = group.pick(orientation: current.effectiveOrientation, color: color).bezelFile
+        select(group.selection(orientation: current.effectiveOrientation, color: color, variant: current.variant))
+    }
+
+    /// 画面の形態（Duo の内側・外側など）を選ぶ。今の向き・色があれば引き継ぎ、その形態に無い向きは回転して対応する。
+    func selectVariant(_ variant: String) {
+        guard let group = selectedGroup, let current = selectedBezel else { return }
+        select(group.selection(orientation: current.effectiveOrientation, color: current.color, variant: variant))
     }
 
     /// 提案を適用する。回転が要る場合は現在の向きから時計回りに 90° 回す（逆なら回転ボタンで反転できる）。
@@ -216,12 +274,14 @@ final class AppModel {
         rotation = .none
         screenshotName = name
         crop = clamp(.fit)
-        // 選択中の機種に別の向きがあり、そちらのほうが縦横比に合うなら向きを切り替える（色は維持）
-        if let group = selectedGroup, group.orientations.count > 1,
-           let current = selectedBezel {
-            let best = group.bestMatch(screenshotWidth: image.width, screenshotHeight: image.height, color: current.color)
-            if best.bezelFile != current.bezelFile {
-                selectedBezelFile = best.bezelFile // didSet でプレビュー更新
+        // 縦横比がよく合う向きに切り替える（色・形態は維持）。その向きが登録されていなければ、逆向きを回して使う
+        if let group = selectedGroup, let current = selectedBezel {
+            let best = group.bestSelection(screenshotWidth: image.width, screenshotHeight: image.height,
+                                           color: current.color, variant: current.variant)
+            let sameFile = best.registered.bezelFile == selectedBezelFile
+            let sameTurn = (best.isRotated ? best.orientation : nil) == turnedTo
+            if !(sameFile && sameTurn) {
+                select(best) // didSet でプレビュー更新
                 return
             }
         }
@@ -347,6 +407,7 @@ final class AppModel {
     private func reloadBezels() {
         do {
             bezels = try library.list()
+            if !categories.contains(browsingCategory), let first = categories.first { browsingCategory = first }
             // サムネイルは機種ごとの代表だけ（色違いまで全部読むと取り込み後に重くなる）
             for b in BezelCatalog.groups(bezels).map(\.representative) where thumbnails[b.bezelFile] == nil {
                 thumbnails[b.bezelFile] = ImageFile.thumbnail(url: library.imageURL(for: b), maxPixel: 200)
@@ -427,6 +488,7 @@ final class AppModel {
         do {
             try library.update(bezel)
             reloadBezels()
+            lastAperture = selectedBezel?.aperture
             if bezel.bezelFile == selectedBezelFile { refreshPreview() }
         } catch { errorMessage = error.localizedDescription }
     }
@@ -439,7 +501,7 @@ final class AppModel {
                 thumbnails[b.bezelFile] = nil
             }
             reloadBezels()
-            if selectedBezel == nil { selectedBezelFile = bezels.first?.bezelFile }
+            if selectedBezel == nil { selectedBezelFile = modelGroups.first?.representative.bezelFile }
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -508,7 +570,7 @@ final class AppModel {
 
     var suggestedFileName: String {
         let sizeSuffix = exportCanvas.map { exportSize == nil ? "" : "_\($0.width)x\($0.height)" } ?? ""
-        let raw = "\(screenshotName.isEmpty ? "screenshot" : screenshotName)_\(selectedBezel?.name ?? "bezel")\(sizeSuffix).png"
+        let raw = "\(screenshotName.isEmpty ? "screenshot" : screenshotName)_\(selectedBezel?.modelName ?? "bezel")\(sizeSuffix).png"
         return raw.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
     }
 

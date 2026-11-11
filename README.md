@@ -15,7 +15,7 @@
 
 ## ベゼルの用意
 
-Apple Design Resources の Product Bezels dmg をマウントして PNG を取り出し、アプリの「ベゼルを追加…」またはベゼル欄へのドロップで追加します。追加時に画面領域が自動検出され、確認シートで枠の位置を見て数値を微調整できます。
+Apple Design Resources の Product Bezels dmg をマウントして PNG を取り出し、アプリの「ベゼルを追加…」またはベゼル欄へのドロップで追加します。フォルダごと（dmg の `PNG` フォルダや、その親フォルダ）ドロップしても取り込めます。機種名はファイル名から決まるので、`PNG` 直下にファイルが並ぶ iPad / Mac / Apple Watch の dmg もそのまま使えます。追加時に画面領域が自動検出され、確認シートで枠の位置を見て数値を微調整できます。
 
 ## データの置き場所
 
@@ -26,6 +26,8 @@ Apple Design Resources の Product Bezels dmg をマウントして PNG を取�
 .app を上書きしても消えません。
 
 ## /Applications への配置
+
+Claude Code からは `/install`（`.claude/scripts/install.sh`）だけが /Applications に配置できます。手動なら下記のとおり。
 
 ```sh
 xcodebuild -project FrameBezelApp.xcodeproj -scheme FrameBezelApp -configuration Release \

@@ -20,7 +20,9 @@ struct BezelEditorView: View {
             Text("赤い枠が検出された画面領域です。ズレていれば数値を直してください。")
                 .font(.caption).foregroundStyle(.secondary)
             overlayPreview
-            TextField("名前", text: $draft.name)
+            TextField("機種名", text: Binding(
+                get: { draft.model ?? draft.name },
+                set: { draft.name = $0; if draft.model != nil { draft.model = $0 } }))
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
                 GridRow {
                     field("X", $draft.aperture.x)

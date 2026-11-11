@@ -62,7 +62,7 @@ nonisolated public final class BezelLibrary: Sendable {
                   fm.fileExists(atPath: imageURL(for: bezel).path) else { continue }
             result.append(bezel)
         }
-        return result.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return result.sorted { $0.modelName.localizedStandardCompare($1.modelName) == .orderedAscending }
     }
 
     /// 追加 = コピー + 検出 + JSON 保存。検出失敗時はコピーを残さない。
@@ -92,13 +92,13 @@ nonisolated public final class BezelLibrary: Sendable {
         if let name {
             displayName = name
         } else if let model = meta?.model {
-            displayName = [model, meta?.color].compactMap { $0 }.joined(separator: " ")
+            displayName = model // 色は別の項目。名前は機種の正式名称だけにする
         } else {
             displayName = Self.defaultName(for: fileName)
         }
         let bezel = Bezel(name: displayName, bezelFile: fileName,
                           imageWidth: image.width, imageHeight: image.height, aperture: aperture,
-                          model: meta?.model, orientation: meta?.orientation, color: meta?.color)
+                          model: meta?.model, orientation: meta?.orientation, color: meta?.color, variant: meta?.variant)
         try bezel.write(to: jsonURL(for: bezel))
         return bezel
     }
@@ -154,7 +154,7 @@ nonisolated public final class BezelLibrary: Sendable {
     /// 重複なら nil。向きが未指定なら検出した画面領域から補う。
     private func addDetecting(png: URL, meta: BezelMeta, existing: [Bezel]) throws -> Bezel? {
         if let orientation = meta.orientation,
-           existing.contains(where: { $0.model == meta.model && $0.color == meta.color && $0.orientation == orientation }) {
+           existing.contains(where: { $0.model == meta.model && $0.color == meta.color && $0.variant == meta.variant && $0.orientation == orientation }) {
             return nil
         }
         try ensureDirectories()
@@ -165,7 +165,7 @@ nonisolated public final class BezelLibrary: Sendable {
             var bezel = try registerCopied(fileName: fileName, name: nil, meta: meta)
             if bezel.orientation == nil {
                 bezel.orientation = bezel.aperture.width > bezel.aperture.height ? .landscape : .portrait
-                if existing.contains(where: { $0.model == bezel.model && $0.color == bezel.color && $0.orientation == bezel.orientation }) {
+                if existing.contains(where: { $0.model == bezel.model && $0.color == bezel.color && $0.variant == bezel.variant && $0.orientation == bezel.orientation }) {
                     try? fm.removeItem(at: dest)
                     try? fm.removeItem(at: jsonURL(for: bezel))
                     return nil
@@ -179,10 +179,11 @@ nonisolated public final class BezelLibrary: Sendable {
         }
     }
 
-    /// PNG の機種フォルダ名。`Portrait` / `Landscape` のような向き別サブフォルダは飛ばして 1 つ上を使う。
+    /// PNG を直接含むフォルダ名。`Portrait` / `Landscape` / `PNG` のような機種名でないフォルダは飛ばして 1 つ上を使う。
+    /// 機種名はここではなくファイル名を優先して決める（`BezelNaming.parse`）。
     private static func modelFolderName(for png: URL) -> String? {
         var dir = png.deletingLastPathComponent()
-        while ["portrait", "landscape"].contains(dir.lastPathComponent.lowercased()) {
+        while BezelNaming.genericFolderNames.contains(dir.lastPathComponent.lowercased()) {
             let parent = dir.deletingLastPathComponent()
             if parent == dir { break }
             dir = parent
@@ -242,10 +243,9 @@ nonisolated public final class BezelLibrary: Sendable {
         return candidate
     }
 
-    /// "Bezel-iPhone-17.png" → "iPhone 17"
+    /// "Bezel-iPhone-17.png" → "iPhone 17"（接頭辞の Bezel は付けない）
     static func defaultName(for fileName: String) -> String {
-        var base = (fileName as NSString).deletingPathExtension
-        if base.hasPrefix("Bezel-") { base.removeFirst("Bezel-".count) }
+        let base = BezelNaming.officialName((fileName as NSString).deletingPathExtension)
         return base.replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " ")
     }
 }

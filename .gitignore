@@ -14,3 +14,7 @@ DerivedData/
 
 # Claude Code (personal)
 .claude/settings.local.json
+
+# Apple 配布のベゼル素材（ライセンス素材のため Git に入れない）
+BezelSources/
+BezelSources-Older/
