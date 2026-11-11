@@ -11,7 +11,7 @@
 
 ## コード構成（2026-11-11 オーナーが Xcode プロジェクト化し、構成を変更。以後はこちらが正）
 - `FrameCore/`（リポジトリ直下）
-  - `Bezel.swift`：ベゼル定義モデル（名前、ファイル名、画像サイズ、画面領域 aperture{x,y,width,height,cornerRadius}）と JSON 入出力
+  - `Bezel.swift`：ベゼル定義モデル（名前、ファイル名、画像サイズ、画面領域 aperture{x,y,width,height,cornerRadius}）と JSON 入出力。角丸は四隅共通の `cornerRadius` が基本で、角ごとに違うデバイス（Duo の外側の画面など）は `cornerRadii`（左上・右上・右下・左下、任意項目）を持つ。ベゼルを回すときは角丸も一緒に回す
   - `BezelDetector.swift`：ベゼル PNG のアルファ走査で画面領域を自動検出（透明ピクセルの外接矩形＋角丸推定）
   - `Composer.swift`：合成の中核。入力（スクショ CGImage、ベゼル定義、背景設定）→ 出力 CGImage の独立関数として実装
   - `BezelLibrary.swift`：Application Support 内のベゼル管理（一覧、追加＝コピー＋検出＋JSON保存、フォルダ丸ごと取り込み、削除、初回起動時のバンドル同梱分のコピー）

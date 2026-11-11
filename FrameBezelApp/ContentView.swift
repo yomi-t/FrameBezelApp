@@ -17,6 +17,8 @@ struct ContentView: View {
     /// 吸着が働く距離（画面上の pt）
     private static let snapDistance = 8.0
     private static let previewSpace = "previewArea"
+    /// 収める・埋めるのボタンの背景の不透明度（1 で完全に不透明）
+    private static let controlBackgroundOpacity = 0.96
 
     /// @Observable のプロパティへ Binding を作る（`$model.x` の代わり）
     private var bindable: Bindable<AppModel> { Bindable(model) }
@@ -112,7 +114,6 @@ struct ContentView: View {
             }
         }
         .overlay(alignment: .topTrailing) {
-            // 警告バナーがあるときはその下に、右寄せで並べる
             VStack(alignment: .trailing, spacing: 0) {
                 aspectBanner
                 fitControl
@@ -150,7 +151,7 @@ struct ContentView: View {
     /// 縦横比が合わないときの案内。設定パネルではなくプレビュー上に出す。
     @ViewBuilder
     private var aspectBanner: some View {
-        if model.aspectMatches == false, let bezel = model.selectedBezel, let ratio = model.screenshotAspect {
+        if model.showsAspectBanner, let bezel = model.selectedBezel, let ratio = model.screenshotAspect {
             let suggestion = model.suggestedBezels.first
             HStack(spacing: 10) {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
@@ -164,11 +165,18 @@ struct ContentView: View {
                     }
                 }
                 Button("切り抜きで合わせる") { model.fillScreen() }
+                Button { model.dismissAspectBanner() } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("この警告を閉じる（新しい画像を読み込むと、また表示します）")
+                .accessibilityLabel("警告を閉じる")
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange.opacity(0.4)))
-            .padding(12)
+            .padding(.top, 12)
+            .padding(.horizontal, 12)
         }
     }
 
@@ -181,10 +189,24 @@ struct ContentView: View {
             VStack(spacing: 6) {
                 HStack(spacing: 8) {
                     Button("収める") { model.fitToScreen() }
+                        .buttonStyle(ResizeButtonStyle())
                     Button("埋める") { model.fillScreen() }
+                        .buttonStyle(ResizeButtonStyle())
                 }
             }
             .padding(12)
+        }
+    }
+    
+    struct ResizeButtonStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(configuration.isPressed ? Color(.systemGray).opacity(0.5) : Color(.controlBackgroundColor).opacity(0.5))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.15)))
+                .foregroundColor(.primary)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
         }
     }
 

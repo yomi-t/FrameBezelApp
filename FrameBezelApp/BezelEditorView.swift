@@ -27,12 +27,35 @@ struct BezelEditorView: View {
                 GridRow {
                     field("X", $draft.aperture.x)
                     field("Y", $draft.aperture.y)
-                    field("角丸", $draft.aperture.cornerRadius)
+                    if draft.aperture.cornerRadii == nil { field("角丸", $draft.aperture.cornerRadius) } else { Color.clear.frame(height: 1) }
                 }
                 GridRow {
                     field("幅", $draft.aperture.width)
                     field("高さ", $draft.aperture.height)
                     Text("画像 \(draft.imageWidth)×\(draft.imageHeight)px").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            // Duo の外側の画面のように、角ごとに角丸が違うデバイス用
+            Toggle("角ごとに角丸を設定", isOn: Binding(
+                get: { draft.aperture.cornerRadii != nil },
+                set: { on in
+                    if on {
+                        draft.aperture.cornerRadii = CornerRadii(uniform: draft.aperture.cornerRadius)
+                    } else {
+                        draft.aperture.cornerRadius = (draft.aperture.cornerRadii?.average ?? draft.aperture.cornerRadius).rounded()
+                        draft.aperture.cornerRadii = nil
+                    }
+                }))
+            if draft.aperture.cornerRadii != nil {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                    GridRow {
+                        field("左上", radiiBinding(\.topLeft))
+                        field("右上", radiiBinding(\.topRight))
+                    }
+                    GridRow {
+                        field("左下", radiiBinding(\.bottomLeft))
+                        field("右下", radiiBinding(\.bottomRight))
+                    }
                 }
             }
             HStack {
@@ -46,7 +69,7 @@ struct BezelEditorView: View {
             }
         }
         .padding(20)
-        .frame(width: 460, height: 640)
+        .frame(width: 460, height: 720)
         .onAppear { loaded = model.bezelImage(for: draft) }
     }
 
@@ -60,7 +83,10 @@ struct BezelEditorView: View {
                 if let loaded {
                     Image(decorative: loaded, scale: 1).resizable().frame(width: iw * s, height: ih * s)
                 }
-                RoundedRectangle(cornerRadius: CGFloat(a.cornerRadius) * s)
+                // 検出・編集した四隅の角丸のとおりに、赤い枠を描く
+                let r = a.radii.fitted(width: a.width, height: a.height)
+                UnevenRoundedRectangle(topLeadingRadius: CGFloat(r.topLeft) * s, bottomLeadingRadius: CGFloat(r.bottomLeft) * s,
+                                       bottomTrailingRadius: CGFloat(r.bottomRight) * s, topTrailingRadius: CGFloat(r.topRight) * s)
                     .stroke(Color.red, lineWidth: 2)
                     .frame(width: CGFloat(a.width) * s, height: CGFloat(a.height) * s)
                     .offset(x: CGFloat(a.x) * s, y: CGFloat(a.y) * s)
@@ -70,6 +96,11 @@ struct BezelEditorView: View {
         }
         .background(Color.gray.opacity(0.25))
         .frame(height: 380)
+    }
+
+    private func radiiBinding(_ keyPath: WritableKeyPath<CornerRadii, Double>) -> Binding<Double> {
+        Binding(get: { draft.aperture.cornerRadii?[keyPath: keyPath] ?? 0 },
+                set: { draft.aperture.cornerRadii?[keyPath: keyPath] = max(0, $0) })
     }
 
     private func field(_ title: String, _ value: Binding<Double>) -> some View {

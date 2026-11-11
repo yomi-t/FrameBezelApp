@@ -87,6 +87,22 @@ enum TestSupport {
         return ctx.makeImage()!
     }
 
+    /// 窓の四隅の角丸が角ごとに違う擬似ベゼル（`radii` は画像を見たままの左上・右上・右下・左下）。
+    static func bezelImage(width w: Int, height h: Int, screen: CGRect, radii: CornerRadii) -> CGImage {
+        let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: sRGB, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        ctx.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        let rect = CGRect(x: screen.minX, y: CGFloat(h) - screen.maxY, width: screen.width, height: screen.height)
+        let a = Aperture(x: 0, y: 0, width: screen.width, height: screen.height, cornerRadius: 0, cornerRadii: radii)
+        ctx.saveGState()
+        ctx.addPath(a.clipPath(in: rect))
+        ctx.clip()
+        ctx.clear(rect)
+        ctx.restoreGState()
+        return ctx.makeImage()!
+    }
+
     static func writeBezelPNG(to url: URL, width: Int = 100, height: Int = 200,
                               screen: CGRect = CGRect(x: 20, y: 20, width: 60, height: 160)) throws {
         try ImageFile.writePNG(bezelImage(width: width, height: height, screen: screen), to: url)

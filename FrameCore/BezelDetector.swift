@@ -78,21 +78,27 @@ nonisolated public enum BezelDetector {
         let bh = maxY - minY + 1
 
         // 角丸推定: 各角から対角線方向に進み、最初に画面ピクセルに当たるまでの距離 k を測る。
-        // 半径 r の円弧は角から対角線上で r(1 - 1/√2) の位置を通るので r = k / (1 - 1/√2)。
+        // 半径 r の円弧は角から対角線上で r(1 - 1/√2) の位置を通るので r = k / (1 - 1/√2)。四隅それぞれ別に測る。
         let corners: [(x: Int, y: Int, dx: Int, dy: Int)] = [
-            (minX, minY, 1, 1), (maxX, minY, -1, 1), (minX, maxY, 1, -1), (maxX, maxY, -1, -1)
+            (minX, minY, 1, 1), (maxX, minY, -1, 1), (maxX, maxY, -1, -1), (minX, maxY, 1, -1) // 左上・右上・右下・左下
         ]
-        var radii: [Double] = []
+        let maxRadius = Double(min(bw, bh)) / 2
+        var perCorner: [Double] = []
         for c in corners {
+            var r = 0.0
             for k in 0..<(min(bw, bh) / 2) where isScreen(c.x + c.dx * k, c.y + c.dy * k) {
-                radii.append(Double(k) / (1 - 1 / 2.0.squareRoot()))
+                r = min(Double(k) / (1 - 1 / 2.0.squareRoot()), maxRadius).rounded()
                 break
             }
+            perCorner.append(r)
         }
-        let maxRadius = Double(min(bw, bh)) / 2
-        let radius = radii.isEmpty ? 0 : min(radii.reduce(0, +) / Double(radii.count), maxRadius)
+        let radii = CornerRadii(topLeft: perCorner[0], topRight: perCorner[1], bottomRight: perCorner[2], bottomLeft: perCorner[3])
+        // 四隅の差が小さいうちは、従来どおり共通の半径（測定の数 px の誤差を、別々の値として持たない）
+        let spread = (perCorner.max() ?? 0) - (perCorner.min() ?? 0)
+        let uniform = spread <= max(3, (perCorner.max() ?? 0) * 0.15)
+        let radius = (radii.average).rounded()
 
         return Aperture(x: Double(minX), y: Double(minY), width: Double(bw), height: Double(bh),
-                        cornerRadius: radius.rounded())
+                        cornerRadius: radius, cornerRadii: uniform ? nil : radii)
     }
 }

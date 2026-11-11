@@ -113,12 +113,22 @@ final class AppModel {
         }
         reloadBezels()
         presets = presetStore.load()
-        selectedBezelFile = modelGroups.first?.representative.bezelFile
+        selectedBezelFile = defaultBezelFile
         // init 中は didSet が走らないため、選択中ベゼルの画像はここで読み込む
         bezelImage = loadSelectedBezelImage()
         lastAperture = selectedBezel?.aperture
         syncCategory()
     }
+
+    /// 既定の選択。iPhone の最新機種（縦向き）。iPhone が 1 つも無ければ、先頭の機種。
+    private var defaultBezelFile: String? {
+        let groups = modelGroups
+        let iPhones = ModelOrder.sortedNewestFirst(groups.filter { $0.category == Self.defaultCategory })
+        return (iPhones.first ?? groups.first)?.representative.bezelFile
+    }
+
+    /// 機種一覧の既定の種類
+    static let defaultCategory: DeviceCategory = .iPhone
 
     /// 保存されているままの、選択中のベゼル（画面領域の編集などはこちらを対象にする）
     var selectedRegisteredBezel: Bezel? { bezels.first { $0.bezelFile == selectedBezelFile } }
@@ -167,6 +177,14 @@ final class AppModel {
         return AspectMatcher.matches(screenshotWidth: screenshot.width, screenshotHeight: screenshot.height, aperture: bezel.aperture)
     }
 
+    /// 縦横比の警告を、ユーザーが閉じたか。新しいスクショを読み込むと、また出す（回転や機種の切り替えでは出し直さない）
+    private(set) var isAspectBannerDismissed = false
+
+    /// 縦横比が合わないことの警告を出すか
+    var showsAspectBanner: Bool { aspectMatches == false && !isAspectBannerDismissed }
+
+    func dismissAspectBanner() { isAspectBannerDismissed = true }
+
     /// 不一致のときに提案する、画面領域の縦横比が合うベゼル。90° 回転すれば合うものも含む（回転は提案のみで自動適用しない）。
     var suggestedBezels: [AspectMatcher.Suggestion] {
         guard let screenshot, aspectMatches == false else { return [] }
@@ -193,7 +211,7 @@ final class AppModel {
     /// 取り込み済みの機種にある種類（iPhone / iPad / Mac / Watch / その他）。機種名から自動で分類する
     var categories: [DeviceCategory] { BezelCatalog.categories(modelGroups) }
     /// 機種一覧に表示している種類。選択中の機種が変わると、その種類に自動で切り替わる
-    var browsingCategory: DeviceCategory = .iPhone
+    var browsingCategory: DeviceCategory = AppModel.defaultCategory
     /// 表示中の種類に属する機種。    /// 新しい機種が上（`ModelOrder`）。
     var visibleGroups: [BezelModelGroup] { ModelOrder.sortedNewestFirst(modelGroups.filter { $0.category == browsingCategory }) }
 
@@ -271,6 +289,7 @@ final class AppModel {
     private func setScreenshot(_ image: CGImage, name: String) {
         originalScreenshot = image
         screenshot = image
+        isAspectBannerDismissed = false // 画像が変わったので、警告をまた出す
         rotation = .none
         screenshotName = name
         crop = clamp(.fit)
@@ -501,7 +520,7 @@ final class AppModel {
                 thumbnails[b.bezelFile] = nil
             }
             reloadBezels()
-            if selectedBezel == nil { selectedBezelFile = modelGroups.first?.representative.bezelFile }
+            if selectedBezel == nil { selectedBezelFile = defaultBezelFile }
         } catch { errorMessage = error.localizedDescription }
     }
 

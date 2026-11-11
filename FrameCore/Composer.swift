@@ -288,9 +288,8 @@ nonisolated public enum Composer {
         let a = bezel.aperture
         let screen = CGRect(x: a.x, y: Double(bezel.imageHeight) - a.y - a.height,
                             width: a.width, height: a.height)
-        let radius = max(0, min(a.cornerRadius, min(screen.width, screen.height) / 2))
         ctx.saveGState()
-        ctx.addPath(CGPath(roundedRect: screen, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        ctx.addPath(a.clipPath(in: screen)) // 角ごとに半径が違う画面（Duo の外側など）にも合わせる
         ctx.clip()
         // アスペクト比が合わないときの余白が背景透け（透明背景なら抜け）にならないよう、画面は黒で下地を敷く
         ctx.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))

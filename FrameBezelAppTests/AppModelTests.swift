@@ -54,12 +54,12 @@ struct AppModelSetupTests {
         #expect(m.aspectMatches == nil && m.imageFrame == nil && m.suggestedBezels.isEmpty)
     }
 
-    @Test func loadsBezelsGroupedByModelAndSelectsFirst() throws {
+    @Test func loadsBezelsGroupedByModelAndSelectsAnIPhone() throws {
         let env = try ModelEnv(); defer { env.cleanup() }
         let m = env.makeModel()
         #expect(m.bezels.count == 4)
         #expect(Set(m.modelGroups.map(\.model)) == ["iPhone X", "iPad Y"])
-        #expect(m.selectedBezelFile == m.bezels.first?.bezelFile)
+        #expect(m.selectedBezel?.modelName == "iPhone X") // 先頭（iPad Y）ではなく、iPhone が既定
         #expect(m.selectedGroup?.model == m.selectedBezel?.modelName)
         #expect(m.thumbnails.count == 2) // 機種ごとの代表だけ
     }
@@ -1030,5 +1030,146 @@ struct AppModelOrderTests {
         let m = env.makeModel()
         m.showCategory(.iPad)
         #expect(m.visibleGroups.map(\.model) == ["iPad Y"])
+    }
+}
+
+@MainActor
+struct AppModelDefaultSelectionTests {
+    private let phone = CGRect(x: 20, y: 20, width: 60, height: 160)
+
+    private func make(_ names: [String]) throws -> ModelEnv {
+        try ModelEnv(bezels: names.map { ($0, 100, 200, phone) })
+    }
+
+    @Test func startsOnTheNewestIPhoneEvenWhenOtherDevicesSortFirst() throws {
+        // 名前順では Apple Watch や iPad が先頭になるが、既定は iPhone の最新機種
+        let env = try make(["Apple Watch Ultra 4 - Natural + Trail Loop Sand.png", "iPad Y - Gray - Portrait.png",
+                            "iPhone 16 - Black - Portrait.png", "iPhone 17 Pro - Silver - Portrait.png", "iPhone 17 - Black - Portrait.png",
+                            "MacBook Neo - Blush.png"])
+        defer { env.cleanup() }
+        let m = env.makeModel()
+        #expect(m.selectedBezel?.modelName == "iPhone 17 Pro")
+        #expect(m.browsingCategory == .iPhone)
+        #expect(m.visibleGroups.first?.model == "iPhone 17 Pro") // 一覧の先頭と、選択が一致する
+    }
+
+    @Test func defaultCategoryIsIPhone() throws {
+        #expect(AppModel.defaultCategory == .iPhone)
+        let env = try ModelEnv(bezels: []); defer { env.cleanup() }
+        #expect(env.makeModel().browsingCategory == .iPhone)
+    }
+
+    @Test func fallsBackToTheFirstModelWhenThereIsNoIPhone() throws {
+        let env = try make(["MacBook Neo - Blush.png", "iPad Y - Gray - Portrait.png"]); defer { env.cleanup() }
+        let m = env.makeModel()
+        #expect(m.selectedBezel != nil)
+        #expect(m.selectedBezel?.modelName == m.modelGroups.first?.model)
+        #expect(m.categories.contains(m.browsingCategory)) // 表示中の種類は、あるものになる
+    }
+
+    @Test func startsInPortraitOfTheDefaultModel() throws {
+        let env = try ModelEnv(bezels: [("iPhone 17 - Black - Landscape.png", 200, 100, CGRect(x: 20, y: 20, width: 160, height: 60)),
+                                        ("iPhone 17 - Black - Portrait.png", 100, 200, phone)])
+        defer { env.cleanup() }
+        #expect(env.makeModel().selectedBezel?.effectiveOrientation == .portrait)
+    }
+
+    @Test func deletingTheSelectedIPhoneSelectsTheNextNewestIPhone() throws {
+        let env = try make(["iPhone 16 - Black - Portrait.png", "iPhone 17 - Black - Portrait.png", "iPad Y - Gray - Portrait.png"])
+        defer { env.cleanup() }
+        let m = env.makeModel()
+        #expect(m.selectedBezel?.modelName == "iPhone 17")
+        m.deleteModel(try #require(m.modelGroups.first { $0.model == "iPhone 17" }))
+        #expect(m.selectedBezel?.modelName == "iPhone 16")
+    }
+}
+
+@MainActor
+struct AppModelAspectBannerTests {
+    /// iPad Y（縦のみ・窓 120x160、3:4）。比が大きく外れるスクショ（正方形に近い 100x100）は不一致になる
+    private func model(_ env: ModelEnv) -> AppModel {
+        let m = env.makeModel()
+        m.selectModel(m.modelGroups.first { $0.model == "iPad Y" }!)
+        return m
+    }
+    private func mismatch(_ env: ModelEnv, name: String = "m") throws -> Data { try env.pngData(TestSupport.solid(100, 100)) }
+    private func match(_ env: ModelEnv) throws -> Data { try env.pngData(TestSupport.solid(60, 80)) }
+
+    @Test func bannerShowsOnlyForAMismatch() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env)
+        #expect(!m.showsAspectBanner) // スクショ未読込
+        m.loadScreenshot(data: try match(env), name: "ok")
+        #expect(m.aspectMatches == true && !m.showsAspectBanner)
+        m.loadScreenshot(data: try mismatch(env), name: "ng")
+        #expect(m.aspectMatches == false && m.showsAspectBanner)
+    }
+
+    @Test func dismissingHidesTheBanner() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env)
+        m.loadScreenshot(data: try mismatch(env), name: "ng")
+        m.dismissAspectBanner()
+        #expect(m.isAspectBannerDismissed && !m.showsAspectBanner)
+        #expect(m.aspectMatches == false) // 不一致そのものは変わらない（切り抜きボタンなどの動作に影響しない）
+    }
+
+    @Test func loadingANewScreenshotShowsTheBannerAgain() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env)
+        m.loadScreenshot(data: try mismatch(env), name: "a")
+        m.dismissAspectBanner()
+        m.loadScreenshot(data: try mismatch(env), name: "b")
+        #expect(!m.isAspectBannerDismissed && m.showsAspectBanner)
+    }
+
+    @Test func reloadingTheSameFileAlsoCountsAsANewImage() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env)
+        let url = env.root.appendingPathComponent("s.png")
+        try ImageFile.writePNG(TestSupport.solid(100, 100), to: url)
+        m.loadScreenshot(url: url)
+        m.dismissAspectBanner()
+        m.loadScreenshot(url: url)
+        #expect(m.showsAspectBanner)
+    }
+
+    @Test func dismissalDoesNotCarryOverToAMatchingThenMismatchingImage() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env)
+        m.loadScreenshot(data: try mismatch(env), name: "a")
+        m.dismissAspectBanner()
+        m.loadScreenshot(data: try match(env), name: "ok")
+        #expect(!m.showsAspectBanner && !m.isAspectBannerDismissed)
+        m.loadScreenshot(data: try mismatch(env), name: "b")
+        #expect(m.showsAspectBanner)
+    }
+
+    @Test func rotatingOrSwitchingBezelsDoesNotBringTheBannerBack() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env)
+        m.loadScreenshot(data: try env.pngData(TestSupport.solid(100, 40)), name: "wide") // どの向きでも不一致
+        m.dismissAspectBanner()
+        m.rotateClockwise()
+        #expect(!m.showsAspectBanner)
+        m.selectModel(m.modelGroups.first { $0.model == "iPhone X" }!)
+        #expect(!m.showsAspectBanner)
+    }
+
+    @Test func dismissingBeforeAnyMismatchIsHarmless() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env)
+        m.dismissAspectBanner()
+        m.loadScreenshot(data: try mismatch(env), name: "a") // 新しい画像なので、また出る
+        #expect(m.showsAspectBanner)
+    }
+
+    @Test func aFailedLoadKeepsTheBannerState() throws {
+        let env = try ModelEnv(); defer { env.cleanup() }
+        let m = model(env)
+        m.loadScreenshot(data: try mismatch(env), name: "a")
+        m.dismissAspectBanner()
+        m.loadScreenshot(data: Data("broken".utf8), name: "x") // 読み込めない画像では、画像は変わらない
+        #expect(!m.showsAspectBanner)
     }
 }
