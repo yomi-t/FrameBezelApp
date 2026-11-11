@@ -4,10 +4,10 @@ import CoreGraphics
 
 /// ベゼル追加直後の検出結果確認と、画面領域・名前の手動微調整。
 struct BezelEditorView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var draft: Bezel
-    // environmentObject は init 時点で使えないので、画像は onAppear で読む
+    // environment は init 時点で使えないので、画像は onAppear で読む
     @State private var loaded: CGImage?
 
     init(bezel: Bezel) {

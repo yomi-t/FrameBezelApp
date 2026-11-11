@@ -4,7 +4,8 @@
 仕様の正は `~/workspace/screenshot-frame-mac/spec.md`。この文書と矛盾したら仕様が優先。
 
 ## 環境の前提
-- このマシン（Linux）には Xcode がない。**ビルドはできないので、ビルド成功を主張しない**。Swift として正しいコードを書き、実ビルドはオーナーの Mac で行われる
+- Mac（Xcode あり）で作業する。`FrameBezelApp.xcodeproj` / scheme `FrameBezelApp`。ビルドは `/build`、テストは `/test`（`.claude/commands/`）。Swift 編集後は hook（`.claude/hooks/build-check.sh`）が自動ビルドし、エラーを返す。**ビルド/テストを実行していない場合は成功を主張しない**
+- コードは **Swift 6 系**（Swift 6 言語モード）で書く。strict concurrency 前提：データ競合を起こさない設計にし、`Sendable` / actor 分離を明示する。プロジェクトは `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` なので、UI 非依存の `FrameCore/` の型は `nonisolated`（必要なら `Sendable`）を付ける
 - 対象：macOS 14+、Swift / SwiftUI、画像処理は Core Graphics / ImageIO。外部ライブラリは使わない
 - App Sandbox は無効前提（個人用）。ベゼルや設定は `~/Library/Application Support/FrameApp/` に置く設計（仕様 §4 に合わせる。2026-11-11 統括が統一）
 

@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import Foundation
 import CoreGraphics
-import Combine
+import Observation
 import UniformTypeIdentifiers
 
 enum BackgroundKind: String, CaseIterable, Identifiable {
@@ -10,6 +10,8 @@ enum BackgroundKind: String, CaseIterable, Identifiable {
     case gradient = "グラデーション"
     case transparent = "透明"
     var id: String { rawValue }
+    /// セグメント表示用の短い名前（インスペクタの幅に収めるため）
+    var shortName: String { self == .gradient ? "グラデ" : rawValue }
 }
 
 enum DropTarget { case screenshot, bezel }
@@ -24,44 +26,57 @@ extension RGBAColor {
 }
 
 @MainActor
-final class AppModel: ObservableObject {
+@Observable
+final class AppModel {
     private static let lastExportDirKey = "lastExportDirectory"
     private static let previewMaxPixel = 1000.0
 
-    private let library = BezelLibrary()
-    private let presetStore: PresetStore
+    @ObservationIgnored private let library = BezelLibrary()
+    @ObservationIgnored private let presetStore: PresetStore
 
-    @Published private(set) var bezels: [Bezel] = []
-    @Published private(set) var thumbnails: [String: CGImage] = [:]
-    @Published private(set) var presets: [Preset] = []
+    private(set) var bezels: [Bezel] = []
+    private(set) var thumbnails: [String: CGImage] = [:]
+    private(set) var presets: [Preset] = []
     /// 読み込んだままのスクショ（回転前）
-    @Published private(set) var originalScreenshot: CGImage?
+    private(set) var originalScreenshot: CGImage?
     /// 回転を反映したスクショ。判定・提案・プレビュー・書き出しはすべてこれを使う
-    @Published private(set) var screenshot: CGImage?
-    @Published private(set) var rotation: Rotation = .none
-    @Published private(set) var screenshotName = ""
-    @Published private(set) var preview: CGImage?
-    @Published var errorMessage: String?
-    @Published var editingBezel: Bezel?
+    private(set) var screenshot: CGImage?
+    private(set) var rotation: Rotation = .none
+    private(set) var screenshotName = ""
+    private(set) var preview: CGImage?
+    var errorMessage: String?
+    var editingBezel: Bezel?
 
-    @Published var selectedBezelFile: String? {
+    var selectedBezelFile: String? {
         didSet {
             bezelImage = selectedBezel.flatMap { try? library.loadImage(for: $0) }
             // 画面領域が変わると移動可能範囲も変わるので丸め直す（refreshPreview も内部で呼ばれる）
             setCrop(crop)
         }
     }
-    @Published var backgroundKind: BackgroundKind = .transparent { didSet { refreshPreview() } }
-    @Published var solidColor: Color = Color(white: 0.1) { didSet { refreshPreview() } }
-    @Published var gradientStart: Color = Color(red: 0.35, green: 0.4, blue: 0.95) { didSet { refreshPreview() } }
-    @Published var gradientEnd: Color = Color(red: 0.7, green: 0.3, blue: 0.85) { didSet { refreshPreview() } }
-    @Published var gradientAngle: Double = 90 { didSet { refreshPreview() } }
-    @Published var fit: FitMode = .fit { didSet { refreshPreview() } }
+    var backgroundKind: BackgroundKind = .transparent {
+        didSet { if oldValue != backgroundKind { refreshPreview() } }
+    }
+    var solidColor: Color = Color(white: 0.1) {
+        didSet { if oldValue != solidColor { refreshPreview() } }
+    }
+    var gradientStart: Color = Color(red: 0.35, green: 0.4, blue: 0.95) {
+        didSet { if oldValue != gradientStart { refreshPreview() } }
+    }
+    var gradientEnd: Color = Color(red: 0.7, green: 0.3, blue: 0.85) {
+        didSet { if oldValue != gradientEnd { refreshPreview() } }
+    }
+    var gradientAngle: Double = 90 {
+        didSet { if oldValue != gradientAngle { refreshPreview() } }
+    }
+    var fit: FitMode = .fit {
+        didSet { if oldValue != fit { refreshPreview() } }
+    }
     /// 切り抜き（フィル時のみ有効）。スクショ単位の調整なのでプリセットには含めない
-    @Published private(set) var crop: ScreenCrop = .identity
+    private(set) var crop: ScreenCrop = .identity
 
-    private var bezelImage: CGImage?
-    private var isApplying = false
+    @ObservationIgnored private var bezelImage: CGImage?
+    @ObservationIgnored private var isApplying = false
 
     init() {
         presetStore = PresetStore(directory: library.appDirectory)
@@ -295,7 +310,8 @@ final class AppModel: ObservableObject {
     private func refreshPreview() {
         guard !isApplying else { return }
         guard let screenshot, let bezel = selectedBezel, let bezelImage else {
-            preview = nil
+            // 既に nil のときは代入しない（は同値でも通知し、ビュー更新中だと警告になる）
+            if preview != nil { preview = nil }
             return
         }
         let s = settings

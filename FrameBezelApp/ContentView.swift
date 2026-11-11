@@ -4,7 +4,7 @@ import CoreGraphics
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) private var model
     @State private var isTargeted = false
     @State private var isBezelTargeted = false
     @State private var bezelToDelete: Bezel?
@@ -12,14 +12,25 @@ struct ContentView: View {
     @State private var presetName = ""
     @State private var dragStartCrop: ScreenCrop?
 
+    /// @Observable のプロパティへ Binding を作る（`$model.x` の代わり）
+    private var bindable: Bindable<AppModel> { Bindable(model) }
+
+    private let swatches: [Color] = [.white, Color(white: 0.1), .blue, .orange, .green, .pink]
+
     var body: some View {
-        HStack(spacing: 0) {
-            previewPane
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                previewPane
+                Divider()
+                inspector.frame(width: 300)
+            }
             Divider()
-            settingsPanel.frame(width: 340)
+            statusBar
         }
-        .sheet(item: $model.editingBezel) { bezel in
-            BezelEditorView(bezel: bezel).environmentObject(model)
+        .frame(minWidth: 820, minHeight: 560)
+        .toolbar { toolbarContent }
+        .sheet(item: bindable.editingBezel) { bezel in
+            BezelEditorView(bezel: bezel).environment(model)
         }
         .alert("エラー", isPresented: Binding(get: { model.errorMessage != nil },
                                               set: { if !$0 { model.errorMessage = nil } })) {
@@ -36,6 +47,31 @@ struct ContentView: View {
         } message: { Text("現在のベゼル・背景を保存します（同名は上書き）") }
     }
 
+    // MARK: ツールバー
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItemGroup(placement: .navigation) {
+            Button { model.chooseScreenshot() } label: { Label("開く", systemImage: "folder") }
+                .help("スクリーンショットを選択")
+            Button { model.pasteFromClipboard() } label: { Label("ペースト", systemImage: "doc.on.clipboard") }
+                .help("クリップボードから貼り付け (⌘V)")
+        }
+        ToolbarItemGroup {
+            Button { model.rotateCounterClockwise() } label: { Label("左回転", systemImage: "rotate.left") }
+                .disabled(model.screenshot == nil)
+            Button { model.rotateClockwise() } label: { Label("右回転", systemImage: "rotate.right") }
+                .disabled(model.screenshot == nil)
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button { model.exportPNG() } label: { Label("書き出し", systemImage: "square.and.arrow.down") }
+                .keyboardShortcut("e")
+                .buttonStyle(.borderedProminent)
+                .disabled(model.preview == nil)
+                .help("PNG を書き出し (⌘E)")
+        }
+    }
+
     // MARK: 左：プレビュー（ドロップ受け口）
 
     private var previewPane: some View {
@@ -46,18 +82,19 @@ struct ContentView: View {
                     Image(decorative: preview, scale: 1)
                         .resizable()
                         .scaledToFit()
+                        .background {
+                            if model.backgroundKind == .transparent { Checkerboard() }
+                        }
                         .frame(width: geo.size.width, height: geo.size.height)
                         .gesture(cropDragGesture(in: geo.size, preview: preview))
                 }
-                .padding(16)
+                .padding(24)
             } else {
-                VStack(spacing: 8) {
-                    Image(systemName: "square.and.arrow.down").font(.system(size: 40))
-                    Text(model.screenshot == nil ? "スクリーンショットをここにドロップ" : "ベゼルを選択してください")
-                    Text("または ⌘V でペースト / 右のボタンでファイル選択").font(.caption)
-                }
-                .foregroundStyle(.secondary)
+                emptyState
             }
+        }
+        .overlay(alignment: .top) { aspectBanner }
+        .overlay {
             if isTargeted {
                 RoundedRectangle(cornerRadius: 12).strokeBorder(Color.accentColor, lineWidth: 3).padding(8)
             }
@@ -65,6 +102,51 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onDrop(of: [.fileURL, .image], isTargeted: $isTargeted) { model.handle(providers: $0, target: .screenshot) }
         .onPasteCommand(of: [.fileURL, .image]) { _ = model.handle(providers: $0, target: .screenshot) }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: model.screenshot == nil ? "square.and.arrow.down" : "iphone")
+                .font(.system(size: 40, weight: .light))
+            Text(model.screenshot == nil ? "スクリーンショットをドロップ" : "ベゼルを選択してください")
+                .font(.title3)
+            if model.screenshot == nil {
+                Text("⌘V でペースト、または上の「開く」から選択").font(.callout)
+            }
+        }
+        .foregroundStyle(.secondary)
+        .padding(40)
+        .overlay(RoundedRectangle(cornerRadius: 16)
+            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+            .foregroundStyle(.tertiary))
+        .padding(32)
+    }
+
+    /// 縦横比が合わないときの案内。設定パネルではなくプレビュー上に出す。
+    @ViewBuilder
+    private var aspectBanner: some View {
+        if model.aspectMatches == false, let bezel = model.selectedBezel, let ratio = model.screenshotAspect {
+            let suggestion = model.suggestedBezels.first
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text(String(format: "縦横比が合いません（スクショ %.2f / %@ %.2f）", ratio, bezel.name,
+                            bezel.aperture.width / bezel.aperture.height))
+                    .font(.callout)
+                Spacer(minLength: 8)
+                if let s = suggestion {
+                    Button(s.needsRotation ? "回転して \(s.bezel.name) に切り替え" : "\(s.bezel.name) に切り替え") {
+                        model.apply(s)
+                    }
+                }
+                if model.fit != .fill {
+                    Button("切り抜きで合わせる") { model.fit = .fill }
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange.opacity(0.4)))
+            .padding(12)
+        }
     }
 
     /// フィル時のみ、プレビューのドラッグでスクショの表示位置を動かす。
@@ -87,188 +169,154 @@ struct ContentView: View {
             .onEnded { _ in dragStartCrop = nil }
     }
 
-    // MARK: 右：設定パネル
+    // MARK: 右：インスペクタ
 
-    private var settingsPanel: some View {
+    private var inspector: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                GroupBox("入力") {
-                    HStack {
-                        Button("ファイルを選択…") { model.chooseScreenshot() }
-                        Button("ペースト") { model.pasteFromClipboard() }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
+            VStack(alignment: .leading, spacing: 20) {
                 bezelSection
-                orientationSection
-                aspectSection
                 backgroundSection
-                GroupBox("フィット") {
-                    VStack(alignment: .leading) {
-                        Picker("フィット", selection: $model.fit) {
-                            Text("収める").tag(FitMode.fit)
-                            Text("埋める").tag(FitMode.fill)
-                        }
-                        .pickerStyle(.segmented)
-                        if model.fit == .fill {
-                            HStack {
-                                Text("拡大")
-                                Slider(value: Binding(get: { model.crop.zoom },
-                                                      set: { var c = model.crop; c.zoom = $0; model.setCrop(c) }),
-                                       in: 1...ScreenCrop.maxZoom)
-                                Text(String(format: "%.1f×", model.crop.zoom)).monospacedDigit().frame(width: 40, alignment: .trailing)
-                            }
-                            HStack {
-                                Text("プレビューをドラッグして位置を調整").font(.caption).foregroundStyle(.secondary)
-                                Spacer()
-                                Button("リセット") { model.resetCrop() }.disabled(model.crop == .identity)
-                            }
-                        }
-                    }
-                }
+                fitSection
                 presetSection
-                Button("PNGを書き出す…") { model.exportPNG() }
-                    .keyboardShortcut("e")
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.preview == nil)
-                    .frame(maxWidth: .infinity)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
         }
+        .scrollBounceBehavior(.basedOnSize)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title).font(.caption).fontWeight(.medium).foregroundStyle(.secondary)
     }
 
     private var bezelSection: some View {
-        GroupBox("ベゼル") {
-            VStack(alignment: .leading, spacing: 8) {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 8)], spacing: 8) {
-                    ForEach(model.bezels) { bezel in
-                        VStack(spacing: 2) {
-                            Group {
-                                if let thumb = model.thumbnails[bezel.bezelFile] {
-                                    Image(decorative: thumb, scale: 1).resizable().scaledToFit()
-                                } else {
-                                    Color.clear
-                                }
-                            }
-                            .frame(height: 72)
-                            Text(bezel.name).font(.caption2).lineLimit(1)
-                        }
-                        .padding(4)
-                        .background(RoundedRectangle(cornerRadius: 6)
-                            .fill(bezel.bezelFile == model.selectedBezelFile ? Color.accentColor.opacity(0.25) : Color.clear))
-                        .contentShape(Rectangle())
-                        .onTapGesture { model.selectedBezelFile = bezel.bezelFile }
-                        .contextMenu {
-                            Button("画面領域を編集…") { model.editingBezel = bezel }
-                            Button("削除…", role: .destructive) { bezelToDelete = bezel }
-                        }
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("ベゼル")
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                ForEach(model.bezels) { bezel in
+                    bezelTile(bezel)
+                }
+                Button { model.chooseBezelToAdd() } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: "plus").font(.title3)
+                        Text("追加").font(.caption2)
                     }
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 84)
+                    .overlay(RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        .foregroundStyle(.tertiary))
                 }
-                HStack {
-                    Button("ベゼルを追加…") { model.chooseBezelToAdd() }
-                    Button("画面領域を編集…") { model.editingBezel = model.selectedBezel }
-                        .disabled(model.selectedBezel == nil)
-                }
-                Text("ベゼル PNG はこの枠にドロップしても追加できます")
-                    .font(.caption2).foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+                .help("ベゼル PNG を追加（ここへドロップでも可）")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(isBezelTargeted ? 2 : 0)
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor, lineWidth: isBezelTargeted ? 2 : 0))
+            .padding(isBezelTargeted ? 4 : 0)
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: isBezelTargeted ? 2 : 0))
             .onDrop(of: [.fileURL], isTargeted: $isBezelTargeted) { model.handle(providers: $0, target: .bezel) }
+
+            Button("画面領域を編集…") { model.editingBezel = model.selectedBezel }
+                .controlSize(.small)
+                .disabled(model.selectedBezel == nil)
         }
     }
 
-    /// 向き（回転）と切り抜き。スクショ読込後は常時表示する。
-    @ViewBuilder
-    private var orientationSection: some View {
-        if model.screenshot != nil {
-            GroupBox("向き・切り抜き") {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Button { model.rotateCounterClockwise() } label: {
-                            Label("反時計回り", systemImage: "rotate.left")
-                        }
-                        Button { model.rotateClockwise() } label: {
-                            Label("時計回り", systemImage: "rotate.right")
-                        }
-                        Spacer()
-                        if !model.rotation.isIdentity {
-                            Text("\(model.rotation.quarterTurns * 90)° 回転中").font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    Button("切り抜きで合わせる") { model.fit = .fill }
-                        .disabled(model.fit == .fill)
+    private func bezelTile(_ bezel: Bezel) -> some View {
+        let selected = bezel.bezelFile == model.selectedBezelFile
+        return VStack(spacing: 4) {
+            Group {
+                if let thumb = model.thumbnails[bezel.bezelFile] {
+                    Image(decorative: thumb, scale: 1).resizable().scaledToFit()
+                } else {
+                    Color.clear
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(height: 60)
+            Text(bezel.name).font(.caption2).lineLimit(1)
         }
-    }
-
-    /// 縦横比が合わないときの提案（回転すれば合うものを含む）。切り抜きは orientationSection で常時選べる。
-    @ViewBuilder
-    private var aspectSection: some View {
-        if model.aspectMatches == false, let bezel = model.selectedBezel, let ratio = model.screenshotAspect {
-            let suggestions = model.suggestedBezels
-            GroupBox("縦横比が合いません") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(String(format: "スクショ %.3f / %@の画面領域 %.3f", ratio, bezel.name,
-                                bezel.aperture.width / bezel.aperture.height))
-                        .font(.caption).foregroundStyle(.secondary)
-                    if suggestions.isEmpty {
-                        Text("合うベゼルがありません。切り抜きで合わせられます。").font(.caption)
-                    } else {
-                        Text(suggestions.count == 1
-                             ? "このスクショには \(suggestions[0].bezel.name) が合います"
-                             : "このスクショには次のベゼルが合います").font(.caption)
-                        ForEach(Array(suggestions.enumerated()), id: \.offset) { _, s in
-                            Button {
-                                model.apply(s)
-                            } label: {
-                                HStack {
-                                    if let thumb = model.thumbnails[s.bezel.bezelFile] {
-                                        Image(decorative: thumb, scale: 1).resizable().scaledToFit().frame(height: 32)
-                                    }
-                                    Text(s.needsRotation ? "回転して \(s.bezel.name) に切り替え" : "\(s.bezel.name) に切り替え")
-                                }
-                            }
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+        .padding(6)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 8)
+            .fill(selected ? Color.accentColor.opacity(0.15) : Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 8)
+            .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.1), lineWidth: selected ? 2 : 1))
+        .contentShape(Rectangle())
+        .onTapGesture { model.selectedBezelFile = bezel.bezelFile }
+        .contextMenu {
+            Button("画面領域を編集…") { model.editingBezel = bezel }
+            Button("削除…", role: .destructive) { bezelToDelete = bezel }
         }
     }
 
     private var backgroundSection: some View {
-        GroupBox("背景") {
-            VStack(alignment: .leading) {
-                Picker("種類", selection: $model.backgroundKind) {
-                    ForEach(BackgroundKind.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                switch model.backgroundKind {
-                case .solid:
-                    ColorPicker("色", selection: $model.solidColor)
-                case .gradient:
-                    ColorPicker("開始色", selection: $model.gradientStart)
-                    ColorPicker("終了色", selection: $model.gradientEnd)
-                    HStack {
-                        Text("角度")
-                        Slider(value: $model.gradientAngle, in: 0...360)
-                        Text("\(Int(model.gradientAngle))°").monospacedDigit().frame(width: 40, alignment: .trailing)
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("背景")
+            Picker("種類", selection: bindable.backgroundKind) {
+                ForEach([BackgroundKind.transparent, .solid, .gradient]) { Text($0.shortName).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            switch model.backgroundKind {
+            case .solid:
+                HStack(spacing: 8) {
+                    ForEach(swatches.indices, id: \.self) { i in
+                        Button { model.solidColor = swatches[i] } label: {
+                            Circle().fill(swatches[i]).frame(width: 22, height: 22)
+                                .overlay(Circle().strokeBorder(Color.primary.opacity(0.2)))
+                        }
+                        .buttonStyle(.plain)
                     }
-                case .transparent:
-                    Text("背景なしで書き出します").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    ColorPicker("色", selection: bindable.solidColor).labelsHidden()
+                }
+            case .gradient:
+                HStack {
+                    ColorPicker("開始", selection: bindable.gradientStart)
+                    ColorPicker("終了", selection: bindable.gradientEnd)
+                }
+                HStack {
+                    Text("角度").font(.callout)
+                    Slider(value: bindable.gradientAngle, in: 0...360)
+                    Text("\(Int(model.gradientAngle))°").monospacedDigit().frame(width: 40, alignment: .trailing)
+                }
+            case .transparent:
+                Text("ベゼルの外側は透明で書き出します").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var fitSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("フィット")
+            Picker("フィット", selection: bindable.fit) {
+                Text("収める").tag(FitMode.fit)
+                Text("埋める").tag(FitMode.fill)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            if model.fit == .fill {
+                HStack {
+                    Image(systemName: "minus.magnifyingglass").foregroundStyle(.secondary)
+                    Slider(value: Binding(get: { model.crop.zoom },
+                                          set: { var c = model.crop; c.zoom = $0; model.setCrop(c) }),
+                           in: 1...ScreenCrop.maxZoom)
+                    Text(String(format: "%.1f×", model.crop.zoom)).monospacedDigit().frame(width: 40, alignment: .trailing)
+                }
+                HStack {
+                    Text("プレビューをドラッグして位置を調整").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("リセット") { model.resetCrop() }
+                        .controlSize(.small)
+                        .disabled(model.crop == .identity)
                 }
             }
         }
     }
 
     private var presetSection: some View {
-        GroupBox("プリセット") {
-            HStack {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 8) {
                 Menu("呼び出し") {
                     if model.presets.isEmpty { Text("（なし）") }
                     ForEach(model.presets) { preset in
@@ -288,7 +336,52 @@ struct ContentView: View {
                     showSavePreset = true
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 6)
+        } label: {
+            sectionHeader("プリセット")
+        }
+    }
+
+    // MARK: 下部ステータスバー
+
+    private var statusBar: some View {
+        HStack(spacing: 12) {
+            if let bezel = model.selectedBezel {
+                let size = Composer.outputSize(bezel: bezel)
+                Text(bezel.name)
+                Text("\(size.width)×\(size.height)").monospacedDigit()
+                Text("背景: \(model.backgroundKind.rawValue)")
+            } else {
+                Text("ベゼルが未選択です")
+            }
+            Spacer()
+            if model.preview != nil { Text("⌘E で書き出し") }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(.bar)
+    }
+}
+
+/// 透明部分を示す市松模様。
+private struct Checkerboard: View {
+    var body: some View {
+        Canvas { context, size in
+            let cell: CGFloat = 10
+            let light = Color(white: 0.95), dark = Color(white: 0.82)
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(light))
+            var y: CGFloat = 0
+            var row = 0
+            while y < size.height {
+                var x: CGFloat = row % 2 == 0 ? 0 : cell
+                while x < size.width {
+                    context.fill(Path(CGRect(x: x, y: y, width: cell, height: cell)), with: .color(dark))
+                    x += cell * 2
+                }
+                y += cell
+                row += 1
+            }
         }
     }
 }
