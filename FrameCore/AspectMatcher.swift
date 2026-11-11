@@ -26,22 +26,6 @@ nonisolated public enum AspectMatcher {
         return d <= tolerance
     }
 
-    /// 許容差内のベゼルを、差の小さい順に返す。`excluding` は現在選択中のベゼルなどを除くための bezelFile。
-    public static func suggestions(
-        screenshotWidth: Int, screenshotHeight: Int, from bezels: [Bezel],
-        excluding excluded: String? = nil, tolerance: Double = defaultTolerance
-    ) -> [Bezel] {
-        bezels
-            .filter { $0.bezelFile != excluded }
-            .compactMap { b -> (Bezel, Double)? in
-                guard let d = relativeDifference(screenshotWidth: screenshotWidth, screenshotHeight: screenshotHeight, aperture: b.aperture),
-                      d <= tolerance else { return nil }
-                return (b, d)
-            }
-            .sorted { $0.1 < $1.1 }
-            .map { $0.0 }
-    }
-
     /// 提案 1 件。`needsRotation` が true なら、現在の向きから 90° 回すと合う（縦横を入れ替えた比で一致）。
     nonisolated public struct Suggestion: Equatable, Sendable {
         public var bezel: Bezel

@@ -14,7 +14,8 @@
   - `Bezel.swift`：ベゼル定義モデル（名前、ファイル名、画像サイズ、画面領域 aperture{x,y,width,height,cornerRadius}）と JSON 入出力
   - `BezelDetector.swift`：ベゼル PNG のアルファ走査で画面領域を自動検出（透明ピクセルの外接矩形＋角丸推定）
   - `Composer.swift`：合成の中核。入力（スクショ CGImage、ベゼル定義、背景設定）→ 出力 CGImage の独立関数として実装
-  - `BezelLibrary.swift`：Application Support 内のベゼル管理（一覧、追加＝コピー＋検出＋JSON保存、削除、名前変更、初回起動時のバンドル同梱分のコピー）
+  - `BezelLibrary.swift`：Application Support 内のベゼル管理（一覧、追加＝コピー＋検出＋JSON保存、フォルダ丸ごと取り込み、削除、初回起動時のバンドル同梱分のコピー）
+  - `BezelCatalog.swift`：Apple 配布ファイル名（`機種 - 色 - Portrait.png`）の解析と、機種ごとのグルーピング・向き/色の選択ロジック。`BezelLibrary.importFolder` がフォルダ丸ごと取り込む
   - その他：`Preset.swift`、`AspectMatcher.swift`、`ImageRotation.swift`、`ImageFile.swift`
 - `FrameBezelApp/`（リポジトリ直下、アプリターゲットのソース）
   - `FrameBezelApp.swift`：@main

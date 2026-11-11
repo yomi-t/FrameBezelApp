@@ -14,7 +14,7 @@ nonisolated public enum BezelLibraryError: Error, LocalizedError {
 }
 
 /// Application Support 内のベゼル管理。1 ベゼル = `X.png` + `X.json`（定義）。
-nonisolated public final class BezelLibrary {
+nonisolated public final class BezelLibrary: Sendable {
     /// 仕様 §4 の保存先名。
     public static let appDirectoryName = "FrameApp"
     private static let bundledMarker = ".bundled-installed"
@@ -23,7 +23,7 @@ nonisolated public final class BezelLibrary {
     public let appDirectory: URL
     public var bezelsDirectory: URL { appDirectory.appendingPathComponent("Bezels", isDirectory: true) }
 
-    private let fm = FileManager.default
+    private var fm: FileManager { .default }
 
     public init(appDirectory: URL? = nil) {
         if let appDirectory {
@@ -66,8 +66,9 @@ nonisolated public final class BezelLibrary {
     }
 
     /// 追加 = コピー + 検出 + JSON 保存。検出失敗時はコピーを残さない。
+    /// ファイル名が `機種 - 色 - Portrait` 形式なら機種・向き・色も読み取る。
     @discardableResult
-    public func add(pngURL: URL, name: String? = nil) throws -> Bezel {
+    public func add(pngURL: URL, name: String? = nil, meta: BezelMeta? = nil) throws -> Bezel {
         guard pngURL.pathExtension.lowercased() == "png" else { throw BezelLibraryError.notPNG }
         try ensureDirectories()
 
@@ -75,7 +76,8 @@ nonisolated public final class BezelLibrary {
         let dest = bezelsDirectory.appendingPathComponent(fileName)
         try fm.copyItem(at: pngURL, to: dest)
         do {
-            return try registerCopied(fileName: fileName, name: name)
+            let meta = meta ?? BezelNaming.parse(fileName: pngURL.lastPathComponent, folderName: nil)
+            return try registerCopied(fileName: fileName, name: name, meta: meta)
         } catch {
             try? fm.removeItem(at: dest)
             throw error
@@ -83,25 +85,116 @@ nonisolated public final class BezelLibrary {
     }
 
     /// bezelsDirectory 内にある PNG を検出して JSON を書く。
-    private func registerCopied(fileName: String, name: String?) throws -> Bezel {
+    private func registerCopied(fileName: String, name: String?, meta: BezelMeta? = nil) throws -> Bezel {
         let image = try ImageFile.load(url: bezelsDirectory.appendingPathComponent(fileName))
         let aperture = try BezelDetector.detect(image: image)
-        let bezel = Bezel(name: name ?? Self.defaultName(for: fileName), bezelFile: fileName,
-                          imageWidth: image.width, imageHeight: image.height, aperture: aperture)
+        let displayName: String
+        if let name {
+            displayName = name
+        } else if let model = meta?.model {
+            displayName = [model, meta?.color].compactMap { $0 }.joined(separator: " ")
+        } else {
+            displayName = Self.defaultName(for: fileName)
+        }
+        let bezel = Bezel(name: displayName, bezelFile: fileName,
+                          imageWidth: image.width, imageHeight: image.height, aperture: aperture,
+                          model: meta?.model, orientation: meta?.orientation, color: meta?.color)
         try bezel.write(to: jsonURL(for: bezel))
         return bezel
+    }
+
+    // MARK: フォルダ取り込み
+
+    nonisolated public struct ImportResult: Sendable {
+        public var added: [Bezel] = []
+        /// 同じ機種・向き・色が既にあるためスキップした数
+        public var skippedDuplicates = 0
+        /// 取り込めなかったファイル（`ファイル名: 理由`）
+        public var failed: [String] = []
+        /// PNG が 1 枚も無かったフォルダ
+        public var emptyFolders: [String] = []
+    }
+
+    /// Apple 配布のフォルダ（機種名フォルダ、または機種フォルダを束ねた親フォルダ）を丸ごと取り込む。
+    /// 機種はフォルダ名、色と向きはファイル名から決める。向きがファイル名に無ければ画面領域の縦横から推定する。
+    public func importFolder(_ folder: URL) -> ImportResult {
+        var result = ImportResult()
+        let keys: [URLResourceKey] = [.isRegularFileKey]
+        guard let walker = fm.enumerator(at: folder, includingPropertiesForKeys: keys,
+                                         options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
+            result.failed.append("\(folder.lastPathComponent): フォルダを開けません")
+            return result
+        }
+        var pngs: [URL] = []
+        for case let url as URL in walker {
+            guard url.pathExtension.lowercased() == "png",
+                  (try? url.resourceValues(forKeys: Set(keys)).isRegularFile) == true else { continue }
+            pngs.append(url)
+        }
+        if pngs.isEmpty { result.emptyFolders.append(folder.lastPathComponent); return result }
+
+        var existing = (try? list()) ?? []
+        for png in pngs.sorted(by: { $0.path.localizedStandardCompare($1.path) == .orderedAscending }) {
+            let meta = BezelNaming.parse(fileName: png.lastPathComponent, folderName: Self.modelFolderName(for: png))
+            do {
+                let bezel = try addDetecting(png: png, meta: meta, existing: existing)
+                if let bezel {
+                    result.added.append(bezel)
+                    existing.append(bezel)
+                } else {
+                    result.skippedDuplicates += 1
+                }
+            } catch {
+                result.failed.append("\(png.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        return result
+    }
+
+    /// 重複なら nil。向きが未指定なら検出した画面領域から補う。
+    private func addDetecting(png: URL, meta: BezelMeta, existing: [Bezel]) throws -> Bezel? {
+        if let orientation = meta.orientation,
+           existing.contains(where: { $0.model == meta.model && $0.color == meta.color && $0.orientation == orientation }) {
+            return nil
+        }
+        try ensureDirectories()
+        let fileName = uniqueFileName(for: png.lastPathComponent)
+        let dest = bezelsDirectory.appendingPathComponent(fileName)
+        try fm.copyItem(at: png, to: dest)
+        do {
+            var bezel = try registerCopied(fileName: fileName, name: nil, meta: meta)
+            if bezel.orientation == nil {
+                bezel.orientation = bezel.aperture.width > bezel.aperture.height ? .landscape : .portrait
+                if existing.contains(where: { $0.model == bezel.model && $0.color == bezel.color && $0.orientation == bezel.orientation }) {
+                    try? fm.removeItem(at: dest)
+                    try? fm.removeItem(at: jsonURL(for: bezel))
+                    return nil
+                }
+                try bezel.write(to: jsonURL(for: bezel))
+            }
+            return bezel
+        } catch {
+            try? fm.removeItem(at: dest)
+            throw error
+        }
+    }
+
+    /// PNG の機種フォルダ名。`Portrait` / `Landscape` のような向き別サブフォルダは飛ばして 1 つ上を使う。
+    private static func modelFolderName(for png: URL) -> String? {
+        var dir = png.deletingLastPathComponent()
+        while ["portrait", "landscape"].contains(dir.lastPathComponent.lowercased()) {
+            let parent = dir.deletingLastPathComponent()
+            if parent == dir { break }
+            dir = parent
+        }
+        let name = dir.lastPathComponent
+        return name.isEmpty ? nil : name
     }
 
     /// 手動微調整・名前変更の保存。
     public func update(_ bezel: Bezel) throws {
         guard fm.fileExists(atPath: imageURL(for: bezel).path) else { throw BezelLibraryError.notFound }
         try bezel.write(to: jsonURL(for: bezel))
-    }
-
-    public func rename(_ bezel: Bezel, to newName: String) throws {
-        var updated = bezel
-        updated.name = newName
-        try update(updated)
     }
 
     public func delete(_ bezel: Bezel) throws {
