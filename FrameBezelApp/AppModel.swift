@@ -32,7 +32,8 @@ final class AppModel {
     private static let exportSizeKey = "exportSizeID"
     private static let previewMaxPixel = 2000.0
 
-    @ObservationIgnored private let library = BezelLibrary()
+    @ObservationIgnored private let library: BezelLibrary
+    @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let presetStore: PresetStore
 
     private(set) var bezels: [Bezel] = []
@@ -48,9 +49,9 @@ final class AppModel {
     var errorMessage: String?
     var editingBezel: Bezel?
     /// 書き出しサイズ（App Store Connect 提出用）。nil はベゼル PNG の元サイズ
-    var exportSizeID: String? = UserDefaults.standard.string(forKey: "exportSizeID") {
+    var exportSizeID: String? {
         didSet {
-            UserDefaults.standard.set(exportSizeID, forKey: Self.exportSizeKey)
+            defaults.set(exportSizeID, forKey: Self.exportSizeKey)
             if oldValue != exportSizeID { refreshPreview() }
         }
     }
@@ -96,7 +97,11 @@ final class AppModel {
     @ObservationIgnored private var bezelImage: CGImage?
     @ObservationIgnored private var isApplying = false
 
-    init() {
+    /// テストでは一時フォルダのライブラリと専用の UserDefaults を渡し、本物の保存先に触れないようにする。
+    init(library: BezelLibrary = BezelLibrary(), defaults: UserDefaults = .standard) {
+        self.library = library
+        self.defaults = defaults
+        exportSizeID = defaults.string(forKey: Self.exportSizeKey)
         presetStore = PresetStore(directory: library.appDirectory)
         do {
             try library.installBundledIfNeeded(from: Bundle.main.url(forResource: "Bezels", withExtension: nil))

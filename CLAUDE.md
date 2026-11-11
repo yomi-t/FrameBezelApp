@@ -16,6 +16,7 @@
   - `Composer.swift`：合成の中核。入力（スクショ CGImage、ベゼル定義、背景設定）→ 出力 CGImage の独立関数として実装
   - `BezelLibrary.swift`：Application Support 内のベゼル管理（一覧、追加＝コピー＋検出＋JSON保存、フォルダ丸ごと取り込み、削除、初回起動時のバンドル同梱分のコピー）
   - `BezelCatalog.swift`：Apple 配布ファイル名（`機種 - 色 - Portrait.png`）の解析と、機種ごとのグルーピング・向き/色の選択ロジック。`BezelLibrary.importFolder` がフォルダ丸ごと取り込む
+  - `HeadlessExport.swift`：コマンドライン書き出し（`--export` 等）。引数の解釈と実行は UI から分離。`FrameBezelApp.swift` の `Launcher` が起動引数を見て GUI / CLI を切り替える
   - その他：`Preset.swift`、`AspectMatcher.swift`、`ImageRotation.swift`、`ImageFile.swift`
 - `FrameBezelApp/`（リポジトリ直下、アプリターゲットのソース）
   - `FrameBezelApp.swift`：@main
@@ -25,7 +26,8 @@
   - 入力はドラッグ＆ドロップ / ファイル選択 / ペーストに対応
   - 書き出しはフル解像度で再合成して PNG 保存。ファイル名は `{元名}_{機種名}.png` を提案
 - `FrameBezelApp.xcodeproj/project.xcproj`：Xcode 27 世代の新形式プロジェクトファイル（JSON）。オーナーの Mac で生成されたものが正
-- `FrameBezelAppTests/`、`FrameBezelAppUITests/`：テンプレート由来のテストターゲット
+- `FrameBezelAppTests/`：Swift Testing のユニットテスト（領域別のファイル。共通ヘルパーは `TestSupport.swift`）。`AppModel` は `init(library:defaults:)` に一時フォルダのライブラリと専用 UserDefaults を渡して試すので、本物の Application Support には触れない
+- `FrameBezelAppUITests/`：テンプレート由来の UI テストターゲット
 - `README.md`：手順と構成の説明（パスはこの構成に合わせて更新すること）
 
 ## 禁止事項

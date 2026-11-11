@@ -40,8 +40,23 @@ cp -R build/Build/Products/Release/FrameBezelApp.app /Applications/
 - 出力サイズはベゼル PNG と同じ（外側の余白は付けない）。背景はベゼルの透明部分にだけ現れる
 - 書き出しはフル解像度で再合成。ファイル名は `{元名}_{機種名}.png` を提案、保存先フォルダは記憶
 
+## コマンドラインからの書き出し（AI・スクリプト向け）
+
+起動引数に `--export` を付けると、画面を開かずに書き出して終了します。登録済みのベゼル（`~/Library/Application Support/FrameApp/`）を使います。
+
+```sh
+APP=build/Build/Products/Debug/FrameBezelApp.app/Contents/MacOS/FrameBezelApp
+$APP --list-models                       # 機種・向き・色の一覧
+$APP --list-sizes                        # App Store の提出サイズ一覧
+$APP --export shot.png --model "iPhone 18 Pro" --color Silver \
+     --size 1179x2556 --background "#101820" --output out.png
+```
+
+終了コードは 0 = 成功、1 = 失敗、2 = 引数の誤り。成功時は出力パスを標準出力に 1 行で出し、警告は標準エラーに出します。詳しくは `--help`。
+
 ## 構成
 
 - `FrameCore/` … UI 非依存の中核（Bezel / BezelDetector / Composer / BezelLibrary / Preset / AspectMatcher / ImageRotation / ImageFile）
 - `FrameBezelApp/` … SwiftUI（FrameBezelApp / ContentView / AppModel / BezelEditorView / Assets.xcassets）
-- `FrameBezelAppTests/`、`FrameBezelAppUITests/` … テンプレート由来のテストターゲット
+- `FrameBezelAppTests/` … ユニットテスト（Swift Testing。`/test` で実行）
+- `FrameBezelAppUITests/` … テンプレート由来の UI テストターゲット
