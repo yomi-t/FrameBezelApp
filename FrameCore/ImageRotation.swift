@@ -2,7 +2,7 @@ import Foundation
 import CoreGraphics
 
 /// スクショの向き。時計回りの 90° 単位。
-public struct Rotation: Equatable, Sendable {
+nonisolated public struct Rotation: Equatable, Sendable {
     /// 時計回りの 90° 回転数（0〜3）
     public private(set) var quarterTurns: Int
 
@@ -20,7 +20,7 @@ public struct Rotation: Equatable, Sendable {
     public func rotatedCounterClockwise() -> Rotation { Rotation(quarterTurns: quarterTurns - 1) }
 }
 
-public enum ImageRotation {
+nonisolated public enum ImageRotation {
     /// 画像を時計回りに回転した新しい CGImage を返す。回転なしなら元画像をそのまま返す。
     public static func rotate(_ image: CGImage, _ rotation: Rotation) -> CGImage? {
         if rotation.isIdentity { return image }

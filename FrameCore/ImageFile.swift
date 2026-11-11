@@ -2,7 +2,7 @@ import Foundation
 import CoreGraphics
 import ImageIO
 
-public enum ImageFileError: Error, LocalizedError {
+nonisolated public enum ImageFileError: Error, LocalizedError {
     case cannotDecode
     case cannotWrite
 
@@ -15,7 +15,7 @@ public enum ImageFileError: Error, LocalizedError {
 }
 
 /// ImageIO の薄いラッパー。
-public enum ImageFile {
+nonisolated public enum ImageFile {
     public static func load(url: URL) throws -> CGImage {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else {

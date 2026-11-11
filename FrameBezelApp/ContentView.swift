@@ -1,4 +1,6 @@
 import SwiftUI
+import Foundation
+import CoreGraphics
 import UniformTypeIdentifiers
 
 struct ContentView: View {

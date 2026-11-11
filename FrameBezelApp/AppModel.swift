@@ -1,5 +1,8 @@
 import SwiftUI
 import AppKit
+import Foundation
+import CoreGraphics
+import Combine
 import UniformTypeIdentifiers
 
 enum BackgroundKind: String, CaseIterable, Identifiable {
@@ -70,6 +73,8 @@ final class AppModel: ObservableObject {
         reloadBezels()
         presets = presetStore.load()
         selectedBezelFile = bezels.first?.bezelFile
+        // init 中は didSet が走らないため、選択中ベゼルの画像はここで読み込む
+        bezelImage = selectedBezel.flatMap { try? library.loadImage(for: $0) }
     }
 
     var selectedBezel: Bezel? { bezels.first { $0.bezelFile == selectedBezelFile } }

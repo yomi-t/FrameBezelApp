@@ -1,7 +1,7 @@
 import Foundation
 
 /// ベゼル + 背景（+ フィット）の名前付き組み合わせ。
-public struct Preset: Codable, Equatable, Identifiable, Sendable {
+nonisolated public struct Preset: Codable, Equatable, Identifiable, Sendable {
     public var name: String
     /// 定義の bezelFile。ベゼルが削除済みなら呼び出し時にベゼル選択は変えない。
     public var bezelFile: String?
@@ -17,7 +17,7 @@ public struct Preset: Codable, Equatable, Identifiable, Sendable {
 }
 
 /// `presets.json`（Application Support/FrameApp/ 直下）への保存。
-public struct PresetStore {
+nonisolated public struct PresetStore {
     public let fileURL: URL
 
     public init(directory: URL) {

@@ -1,7 +1,7 @@
 import Foundation
 
 /// スクショと画面領域の縦横比の比較、および合うベゼルの探索。UI に依存しない純粋なロジック。
-public enum AspectMatcher {
+nonisolated public enum AspectMatcher {
     /// 相対差がこの値以下なら「一致」とみなす（1%）。
     /// 現行 iPhone の画面比は 0.460〜0.462 に収まり（同世代内の差は 0.5% 未満）、
     /// 自動検出の数px誤差（約0.2%）も吸収できる。一方 1% を超えると fit 時の黒帯が
@@ -43,7 +43,7 @@ public enum AspectMatcher {
     }
 
     /// 提案 1 件。`needsRotation` が true なら、現在の向きから 90° 回すと合う（縦横を入れ替えた比で一致）。
-    public struct Suggestion: Equatable, Sendable {
+    nonisolated public struct Suggestion: Equatable, Sendable {
         public var bezel: Bezel
         public var needsRotation: Bool
     }

@@ -1,7 +1,7 @@
 import Foundation
 import CoreGraphics
 
-public struct RGBAColor: Codable, Equatable, Sendable {
+nonisolated public struct RGBAColor: Codable, Equatable, Sendable {
     public var r: Double
     public var g: Double
     public var b: Double
@@ -17,21 +17,21 @@ public struct RGBAColor: Codable, Equatable, Sendable {
     var cgColor: CGColor { CGColor(srgbRed: r, green: g, blue: b, alpha: a) }
 }
 
-public enum BackgroundStyle: Codable, Equatable, Sendable {
+nonisolated public enum BackgroundStyle: Codable, Equatable, Sendable {
     case solid(RGBAColor)
     /// angleDegrees: 0 = 左→右、90 = 上→下
     case gradient(start: RGBAColor, end: RGBAColor, angleDegrees: Double)
     case transparent
 }
 
-public enum FitMode: String, Codable, CaseIterable, Sendable {
+nonisolated public enum FitMode: String, Codable, CaseIterable, Sendable {
     /// アスペクト比維持で画面領域に収める（余りは黒）
     case fit
     /// アスペクト比維持で画面領域を埋める（はみ出しは切り落とし）
     case fill
 }
 
-public struct ComposeSettings: Codable, Equatable, Sendable {
+nonisolated public struct ComposeSettings: Codable, Equatable, Sendable {
     public var background: BackgroundStyle
     public var fit: FitMode
 
@@ -42,7 +42,7 @@ public struct ComposeSettings: Codable, Equatable, Sendable {
 }
 
 /// フィル時の切り抜き位置・拡大率。画面領域に対する正規化値なので、プレビューと書き出しで同じ結果になる。
-public struct ScreenCrop: Equatable, Sendable {
+nonisolated public struct ScreenCrop: Equatable, Sendable {
     public static let maxZoom = 4.0
     public static let identity = ScreenCrop()
 
@@ -71,7 +71,7 @@ public struct ScreenCrop: Equatable, Sendable {
     }
 }
 
-public enum ComposeError: Error, LocalizedError {
+nonisolated public enum ComposeError: Error, LocalizedError {
     case contextCreationFailed
     case imageCreationFailed
 
@@ -79,7 +79,7 @@ public enum ComposeError: Error, LocalizedError {
 }
 
 /// 合成の中核。UI・ファイルに依存しない純粋な関数。
-public enum Composer {
+nonisolated public enum Composer {
     /// 出力キャンバスはベゼル画像のサイズそのもの（外側に余白は付けない）。
     public static func outputSize(bezel: Bezel, scale: Double = 1) -> (width: Int, height: Int) {
         let s = max(0.01, scale)

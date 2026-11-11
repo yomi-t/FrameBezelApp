@@ -1,7 +1,7 @@
 import Foundation
 
 /// 画面領域。座標はベゼル PNG のピクセル単位で、原点は画像の左上（y は下向き）。
-public struct Aperture: Codable, Equatable, Sendable {
+nonisolated public struct Aperture: Codable, Equatable, Sendable {
     public var x: Double
     public var y: Double
     public var width: Double
@@ -18,7 +18,7 @@ public struct Aperture: Codable, Equatable, Sendable {
 }
 
 /// ベゼル定義（仕様 §7 の JSON 形式と 1:1 対応）。
-public struct Bezel: Codable, Equatable, Identifiable, Sendable {
+nonisolated public struct Bezel: Codable, Equatable, Identifiable, Sendable {
     public var name: String
     public var bezelFile: String
     public var imageWidth: Int

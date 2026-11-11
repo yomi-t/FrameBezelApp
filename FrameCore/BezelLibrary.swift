@@ -1,7 +1,7 @@
 import Foundation
 import CoreGraphics
 
-public enum BezelLibraryError: Error, LocalizedError {
+nonisolated public enum BezelLibraryError: Error, LocalizedError {
     case notPNG
     case notFound
 
@@ -14,7 +14,7 @@ public enum BezelLibraryError: Error, LocalizedError {
 }
 
 /// Application Support 内のベゼル管理。1 ベゼル = `X.png` + `X.json`（定義）。
-public final class BezelLibrary {
+nonisolated public final class BezelLibrary {
     /// 仕様 §4 の保存先名。
     public static let appDirectoryName = "FrameApp"
     private static let bundledMarker = ".bundled-installed"

@@ -1,4 +1,6 @@
 import SwiftUI
+import Foundation
+import CoreGraphics
 
 /// ベゼル追加直後の検出結果確認と、画面領域・名前の手動微調整。
 struct BezelEditorView: View {

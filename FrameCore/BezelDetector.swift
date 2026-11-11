@@ -1,7 +1,7 @@
 import Foundation
 import CoreGraphics
 
-public enum BezelDetectorError: Error, LocalizedError {
+nonisolated public enum BezelDetectorError: Error, LocalizedError {
     case cannotReadPixels
     case noScreenRegion
 
@@ -14,7 +14,7 @@ public enum BezelDetectorError: Error, LocalizedError {
 }
 
 /// ベゼル PNG のアルファ走査で画面領域を検出する。
-public enum BezelDetector {
+nonisolated public enum BezelDetector {
     /// これ未満のアルファを「透明」とみなす。縁のアンチエイリアスを画面側に含めないため半値にする。
     static let transparentThreshold: UInt8 = 128
 

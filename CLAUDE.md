@@ -8,19 +8,23 @@
 - 対象：macOS 14+、Swift / SwiftUI、画像処理は Core Graphics / ImageIO。外部ライブラリは使わない
 - App Sandbox は無効前提（個人用）。ベゼルや設定は `~/Library/Application Support/FrameApp/` に置く設計（仕様 §4 に合わせる。2026-11-11 統括が統一）
 
-## コード構成
-- `Sources/FrameCore/`
+## コード構成（2026-11-11 オーナーが Xcode プロジェクト化し、構成を変更。以後はこちらが正）
+- `FrameCore/`（リポジトリ直下）
   - `Bezel.swift`：ベゼル定義モデル（名前、ファイル名、画像サイズ、画面領域 aperture{x,y,width,height,cornerRadius}）と JSON 入出力
   - `BezelDetector.swift`：ベゼル PNG のアルファ走査で画面領域を自動検出（透明ピクセルの外接矩形＋角丸推定）
-  - `Composer.swift`：合成の中核。入力（スクショ CGImage、ベゼル定義、背景設定、余白）→ 出力 CGImage の独立関数として実装
+  - `Composer.swift`：合成の中核。入力（スクショ CGImage、ベゼル定義、背景設定）→ 出力 CGImage の独立関数として実装
   - `BezelLibrary.swift`：Application Support 内のベゼル管理（一覧、追加＝コピー＋検出＋JSON保存、削除、名前変更、初回起動時のバンドル同梱分のコピー）
-- `Sources/App/`
+  - その他：`Preset.swift`、`AspectMatcher.swift`、`ImageRotation.swift`、`ImageFile.swift`
+- `FrameBezelApp/`（リポジトリ直下、アプリターゲットのソース）
   - `FrameBezelApp.swift`：@main
   - `ContentView.swift`：単一ウィンドウ。左プレビュー（ドラッグ＆ドロップ受け口）、右設定パネル
-  - 設定：ベゼル選択、背景（単色 / グラデーション / 透明）、余白、フィット、書き出しボタン
+  - `AppModel.swift`、`BezelEditorView.swift`、`Assets.xcassets/`
+  - 設定：ベゼル選択、背景（単色 / グラデーション / 透明、デフォルトは透明）、フィット、書き出しボタン
   - 入力はドラッグ＆ドロップ / ファイル選択 / ペーストに対応
   - 書き出しはフル解像度で再合成して PNG 保存。ファイル名は `{元名}_{機種名}.png` を提案
-- `README.md`：オーナーが Xcode プロジェクトを作成してこのソースを取り込む手順
+- `FrameBezelApp.xcodeproj/project.xcproj`：Xcode 27 世代の新形式プロジェクトファイル（JSON）。オーナーの Mac で生成されたものが正
+- `FrameBezelAppTests/`、`FrameBezelAppUITests/`：テンプレート由来のテストターゲット
+- `README.md`：手順と構成の説明（パスはこの構成に合わせて更新すること）
 
 ## 禁止事項
 - 外部送信・公開・課金に関わる実装
